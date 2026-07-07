@@ -12,7 +12,7 @@ from .serializers import PaymentSerializer
 from order.models import Order
 from users.models import Notification
 
-class initializePaymentView(APIView):
+class InitializePaymentView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):

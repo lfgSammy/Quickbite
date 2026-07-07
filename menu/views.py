@@ -26,7 +26,7 @@ class CategoryListView(APIView):
             return Response(serializer.data,status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
-class CategoryListView(APIView):
+class CategoryDetailView(APIView):
     def get_permission(self):
         if self.request.method == 'GET':
             return [AllowAny()]
@@ -70,7 +70,7 @@ class CategoryListView(APIView):
         category.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
     
-class MenuListView(APIView):
+class MenuItemListView(APIView):
     def get_permissions(self):
         if self.request.get == 'GET':
             return Response[AllowAny()]
