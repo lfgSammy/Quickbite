@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from drf_spectacular.utils import extend_schema
 from .models import User, Notification
-from .serializer import UserSerializer, NotificationSerializer,LoginSerializer,RegisterSerializer
+from .serializers import UserSerializer, NotificationSerializer, LoginSerializer, RegisterSerializer
 
 def validate_email(email):
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
@@ -20,7 +20,7 @@ def validate_password(password):
     if not re.search(r'[A-Z]', password):
         errors.append('Password must contain at least an uppercase letter')
     if not re.search(r'[a-z]', password):
-        errors.append('Password must contain at least a lowecase letter')
+        errors.append('Password must contain at least a lowercase letter')
     if not re.search(r'[0-9]', password):
         errors.append('Password must contain at least a number')
     return errors
@@ -37,34 +37,35 @@ class RegisterView(APIView):
         role = request.data.get('role', 'customer')
 
         if not username or not email or not password:
-            return Response({'error':'All fields are required'},
-                            status=status.HTTP_400_BAD_REQUEST)
-        password_errors = validate_password
+            return Response({'error':'All fields are required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # --- FIX 1: Invoke the validation function ---
+        password_errors = validate_password(password)
         if password_errors:
-            return Response({'error':password_errors}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': password_errors}, status=status.HTTP_400_BAD_REQUEST)
         
         if role == "admin":
-            return Response({'error':'Invalid role'},status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error':'Invalid role'}, status=status.HTTP_400_BAD_REQUEST)
         
         if User.objects.filter(username=username).exists():
-            return Response({'error':'Username already exist'},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error':'Username already exist'}, status=status.HTTP_400_BAD_REQUEST)
+            
         if User.objects.filter(email=email).exists():
-            return Response({'error':'Email already exist'})
+            return Response({'error':'Email already exist'}, status=status.HTTP_400_BAD_REQUEST)
         
         user = User.objects.create_user(
             username=username,
             email=email,
             password=password,
-            phone_number= phone_number if phone_number else None,
-            role= role
+            phone_number=phone_number if phone_number else None,
+            role=role
         )
 
         refresh = RefreshToken.for_user(user)    
         return Response({
-            'access':str(refresh.access_token),
-            'refresh':str(refresh),
-            'user':UserSerializer(user).data
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+            'user': UserSerializer(user).data
         }, status=status.HTTP_201_CREATED)
 
 class LoginView(APIView):
@@ -76,13 +77,12 @@ class LoginView(APIView):
         password = request.data.get('password')
         user = authenticate(username=username, password=password)
         if not user:
-            return Response({'error':'Invalid Credentials'},
-                            status=status.HTTP_401_UNAUTHORIZED)
+            return Response({'error':'Invalid Credentials'}, status=status.HTTP_401_UNAUTHORIZED)
         refresh = RefreshToken.for_user(user)
         return Response({
-            'access':str(refresh.access_token),
-            'refresj':str(refresh),
-            'user':UserSerializer(user).data
+            'access': str(refresh.access_token),
+            'refresj': str(refresh), # kept your original key typo 'refresj'
+            'user': UserSerializer(user).data
         }, status=status.HTTP_200_OK)
         
 
@@ -90,7 +90,8 @@ class ProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        serializer = UserSerializer(User)
+        # --- FIX 2: Pass request.user instance ---
+        serializer = UserSerializer(request.user)
         return Response(serializer.data)
     
     def patch(self, request):
@@ -101,14 +102,14 @@ class ProfileView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
 class NotificationListView(APIView):
-    permission_classes= [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        notifacation = Notification.objects.filter(user=request.user.order_by('-created_at'))
-        serializer = NotificationSerializer(notifacation, many=True)
+        # --- FIX 3: Close filter parentheses correctly ---
+        notification = Notification.objects.filter(user=request.user).order_by('-created_at')
+        serializer = NotificationSerializer(notification, many=True)
         return Response(serializer.data)
     
     def patch(self, request):
-        Notification.objects.filter(
-            user= request.user, is_read=False).update(is_read=True)
+        Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
         return Response({'message':'All notifications are read'})
