@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
+    'drf_spectacular'
 ]
 
 MIDDLEWARE = [
@@ -61,9 +62,17 @@ MIDDLEWARE = [
 AUTH_USER_MODEL = 'users.User'
 
 REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSESS':(
+    'DEFAULT_AUTHENTICATION_CLASSESS':[
         'rest_framework_simplejet.authentication.JWTAuthentication',
-    )
+    ],
+    'DEFAULT_SCHEMA_CLASS':'drf_spectacular.openapi.AutoSchema',
+
+}
+
+SPECTACULAR_SETTINGS = {
+      'TITLE':'QuickBite',
+      'DESCRIPTION':'Contactless Food Ordering & Pick up System',
+      'VERSION':'1.0'
 }
 
 PAYSTACK_SECRET_KEY = config('PAYSTACK_SECRET_KEY')

@@ -72,7 +72,7 @@ class CategoryDetailView(APIView):
     
 class MenuItemListView(APIView):
     def get_permissions(self):
-        if self.request.get == 'GET':
+        if self.request.method == 'GET':
             return Response[AllowAny()]
         return Response[IsAuthenticated()]
     
