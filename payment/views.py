@@ -11,6 +11,57 @@ from .models import Payment
 from .serializers import PaymentSerializer
 from order.models import Order
 from users.models import Notification
+import qrcode
+import io
+import base64
+from django.core.mail import EmailMessage
+from django.conf import settings
+
+
+def generate_qr_code(qr_data):
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(str(qr_data))
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buffer = io.BytesIO()
+    img.save(buffer, format='PNG')
+    buffer.seek(0)
+    return buffer
+
+
+def send_qr_code_email(user, order):
+    qr_buffer = generate_qr_code(order.qr_code)
+    email = EmailMessage(
+        subject=f'QuickBite — Order #{order.id} Confirmed!',
+        body=f'''
+Hi {user.username},
+
+Your order has been confirmed and payment received!
+
+Order Details:
+- Order ID: #{order.id}
+- Total: ₦{order.total_amount}
+- Pickup Time: {order.pickup_time.strftime('%B %d, %Y at %I:%M %p')}
+
+Your QR code is attached to this email.
+Show it at the outlet when collecting your order.
+
+Thank you for choosing QuickBite!
+        ''',
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=[user.email]
+    )
+    email.attach(
+        f'order_{order.id}_qrcode.png',
+        qr_buffer.getvalue(),
+        'image/png'
+    )
+    email.send(fail_silently=True)
 
 class InitializePaymentView(APIView):
     permission_classes = [IsAuthenticated]
@@ -101,6 +152,8 @@ class VerifyPaymentView(APIView):
             order.status = 'paid'
             order.save()
 
+            send_qr_code_email(order.customer, order)
+            
             # notify customer
             Notification.objects.create(
                 user=order.customer,

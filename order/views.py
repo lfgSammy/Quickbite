@@ -6,6 +6,74 @@ from rest_framework.views import APIView
 from .models import Cart, CartItem, Order, OrderItem
 from .serializers import CartSerializer, CartItemSerializer, OrderSerializer
 from menu.models import MenuItem
+from django.db.models import Sum, Count
+from django.utils import timezone
+from datetime import timedelta
+
+class AdminDashboardView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_admin_user:
+            return Response({'error':'Admin access required'},
+                            status=status.HTTP_403_FORBIDDEN)
+        
+        today = timezone.now().date()
+        week_ago = today - timedelta(days=7)
+        month_ago = today -timedelta(days=30)
+
+        #total orders
+        total_orders = Order.objects.count()
+        today_orders = Order.objects.filter(created_at__date=today).count()
+
+        #revenue
+        total_revenue = Order.objects.filter(
+            status__in = ['paid','preparing','ready','collected']
+        ).aggregate(total=Sum('total_amount'))['total'] or 0
+
+        today_revenue = Order.objects.filter(
+            created_at__today = today,
+            status__in = ['paid','preparing','ready','collected']
+        ).aggregate(total=Sum('total_amount'))['total'] or 0
+
+        weekly_revenue = Order.objects.filter(
+            created_at__date__gte = week_ago,
+            status__in = ['paid', 'preparing', 'ready','collected']
+        ).aggregate(total = Sum('total_amount'))['total'] or 0
+
+        #order status breakdown
+        status_breakdown = Order.objects.values('status').annotate(
+            count=Count('id')
+        )
+
+        #popular items
+        popular_items = OrderItem.objects.values(
+            'menu_item__name'
+        ).annotate(
+            total_ordered=Sum('quantity')
+        ).order_by('-total_ordered')[:5]
+
+        #pending orders
+        pending_orders = Order.objects.filter(
+            status__in = ['paid', 'preparing']
+        ).select_related('customer').prefetch_related(
+            'items__menu_item'
+        ).order_by('pickup_time')
+
+        pending_serializer = OrderSerializer(pending_orders, many=True)
+
+        return Response({
+              'overview': {
+                'total_orders': total_orders,
+                'today_orders': today_orders,
+                'total_revenue': total_revenue,
+                'today_revenue': today_revenue,
+                'weekly_revenue': weekly_revenue,
+            },
+            'status_breakdown': list(status_breakdown),
+            'popular_items': list(popular_items),
+            'pending_orders': pending_serializer.data
+        })
 
 
 class CartView(APIView):

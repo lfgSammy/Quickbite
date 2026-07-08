@@ -7,4 +7,5 @@ urlpatterns = [
     path('orders/', views.OrderListView.as_view(), name='order-list'),
     path('orders/<int:order_id>/', views.OrderDetailView.as_view(), name='order-detail'),
     path('orders/verify-qr/', views.VerifyQRView.as_view(), name='verify-qr'),
+    path('admin/dashboard/', views.AdminDashboardView.as_view(), name='admin-dashboard'),
 ]
