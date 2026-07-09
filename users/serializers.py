@@ -12,7 +12,11 @@ class RegisterSerializer(serializers.ModelSerializer):
         default =['customer']
     )
 
-class LoginSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['username','email', 'password','phone_number','role']
+
+class LoginSerializer(serializers.Serializer):
     username = serializers.CharField()
     password = serializers.CharField(write_only=True)
 
