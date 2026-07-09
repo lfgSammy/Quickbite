@@ -39,6 +39,9 @@ class RegisterView(APIView):
         if not username or not email or not password:
             return Response({'error':'All fields are required'}, status=status.HTTP_400_BAD_REQUEST)
         
+        if not validate_email(email):
+            return Response({'error':'Invalid email format'}, status=status.HTTP_400_BAD_REQUEST)
+        
         # --- FIX 1: Invoke the validation function ---
         password_errors = validate_password(password)
         if password_errors:
@@ -81,7 +84,7 @@ class LoginView(APIView):
         refresh = RefreshToken.for_user(user)
         return Response({
             'access': str(refresh.access_token),
-            'refresj': str(refresh), # kept your original key typo 'refresj'
+            'refresh': str(refresh), # kept your original key typo 'refresh'
             'user': UserSerializer(user).data
         }, status=status.HTTP_200_OK)
         
