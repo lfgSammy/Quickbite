@@ -24,6 +24,7 @@ class AdminDashboardView(APIView):
 
         #total orders
         total_orders = Order.objects.count()
+        #don't forget
         today_orders = Order.objects.filter(created_at__date=today).count()
 
         #revenue
@@ -80,13 +81,13 @@ class CartView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        cart, created = Cart.objects.get_or_create(user=request.user)
+        cart, created = Cart.objects.get_or_create(customer=request.user)
         serializer = CartSerializer(cart)
         return Response(serializer.data)
 
     def post(self, request):
         # add item to cart
-        cart, created = Cart.objects.get_or_create(user=request.user)
+        cart, created = Cart.objects.get_or_create(customer=request.user)
         menu_item_id = request.data.get('menu_item_id')
         quantity = int(request.data.get('quantity', 1))
 
@@ -109,7 +110,7 @@ class CartView(APIView):
 
     def delete(self, request):
         # clear entire cart
-        cart = Cart.objects.filter(user=request.user).first()
+        cart = Cart.objects.filter(customer=request.user).first()
         if cart:
             cart.items.all().delete()
         return Response({'message': 'Cart cleared'})
@@ -119,7 +120,7 @@ class CartItemView(APIView):
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, item_id):
-        cart = Cart.objects.filter(user=request.user).first()
+        cart = Cart.objects.filter(customer=request.user).first()
         if not cart:
             return Response({'error': 'Cart not found'},
                             status=status.HTTP_404_NOT_FOUND)
@@ -137,7 +138,7 @@ class CartItemView(APIView):
         return Response(serializer.data)
 
     def delete(self, request, item_id):
-        cart = Cart.objects.filter(user=request.user).first()
+        cart = Cart.objects.filter(customer=request.user).first()
         if not cart:
             return Response({'error': 'Cart not found'},
                             status=status.HTTP_404_NOT_FOUND)
@@ -156,7 +157,7 @@ class OrderListView(APIView):
     def get(self, request):
         # admin and kitchen see all orders
         # customers see only their own
-        if request.user.is_admin_user or request.user.is_kitchen:
+        if request.user.is_admin or request.user.is_kitchen:
             orders = Order.objects.select_related('customer').prefetch_related(
                 'items__menu_item').all().order_by('-created_at')
         else:
@@ -172,7 +173,7 @@ class OrderListView(APIView):
             return Response({'error': 'Only customers can place orders'},
                             status=status.HTTP_403_FORBIDDEN)
 
-        cart = Cart.objects.filter(user=request.user).first()
+        cart = Cart.objects.filter(customer=request.user).first()
         if not cart or not cart.items.exists():
             return Response({'error': 'Your cart is empty'},
                             status=status.HTTP_400_BAD_REQUEST)
@@ -229,7 +230,7 @@ class OrderDetailView(APIView):
 
     def patch(self, request, order_id):
         # kitchen and admin can update order status
-        if not request.user.is_kitchen and not request.user.is_admin_user:
+        if not request.user.is_kitchen and not request.user.is_admin:
             return Response(
                 {'error': 'Only kitchen staff and admins can update order status'},
                 status=status.HTTP_403_FORBIDDEN)
@@ -256,7 +257,7 @@ class VerifyQRView(APIView):
 
     def post(self, request):
         # only kitchen and admin can verify QR codes
-        if not request.user.is_kitchen and not request.user.is_admin_user:
+        if not request.user.is_kitchen and not request.user.is_admin:
             return Response({'error': 'Not authorized'},
                             status=status.HTTP_403_FORBIDDEN)
 
