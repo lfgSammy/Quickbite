@@ -20,11 +20,11 @@ class User(AbstractUser):
     
     @property
     def is_admin(self):
-        return self.role == 'admin'
+        return self.role == 'admin' or self.is_superuser
     
     @property
     def is_customer(self):
-        return self.role == 'customer'
+        return self.role == 'customer' and not self.is_superuser
     
 class Notification(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
