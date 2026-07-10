@@ -33,8 +33,7 @@ class RegisterView(APIView):
         username = request.data.get('username')
         password = request.data.get('password')
         email = request.data.get('email')
-        phone_number = request.data.get('phone_number')
-        role = request.data.get('role', 'customer')
+        phone_number = request.data.get('phone_number', '')
 
         if not username or not email or not password:
             return Response({'error':'All fields are required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -46,10 +45,7 @@ class RegisterView(APIView):
         password_errors = validate_password(password)
         if password_errors:
             return Response({'error': password_errors}, status=status.HTTP_400_BAD_REQUEST)
-        
-        if role == "admin":
-            return Response({'error':'Invalid role'}, status=status.HTTP_400_BAD_REQUEST)
-        
+      
         if User.objects.filter(username=username).exists():
             return Response({'error':'Username already exist'}, status=status.HTTP_400_BAD_REQUEST)
             
@@ -61,7 +57,7 @@ class RegisterView(APIView):
             email=email,
             password=password,
             phone_number=phone_number if phone_number else None,
-            role=role
+            role='customer'
         )
 
         refresh = RefreshToken.for_user(user)    
@@ -70,6 +66,37 @@ class RegisterView(APIView):
             'refresh': str(refresh),
             'user': UserSerializer(user).data
         }, status=status.HTTP_201_CREATED)
+
+class AssignRoleView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, user_id):
+        # only admin can assign roles
+        if not request.user.is_admin:
+            return Response({'error': 'Only admins can assign roles'},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        new_role = request.data.get('role')
+        valid_roles = ['customer', 'kitchen', 'admin']
+
+        if new_role not in valid_roles:
+            return Response(
+                {'error': f'Invalid role. Choose from {valid_roles}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = User.objects.filter(id=user_id).first()
+        if not user:
+            return Response({'error': 'User not found'},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        user.role = new_role
+        user.save()
+
+        return Response({
+            'message': f'{user.username} role updated to {new_role}',
+            'user': UserSerializer(user).data
+        })
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
