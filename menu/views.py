@@ -27,7 +27,7 @@ class CategoryListView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
 class CategoryDetailView(APIView):
-    def get_permission(self):
+    def get_permissions(self):
         if self.request.method == 'GET':
             return [AllowAny()]
         return [IsAuthenticated()]
@@ -73,8 +73,8 @@ class CategoryDetailView(APIView):
 class MenuItemListView(APIView):
     def get_permissions(self):
         if self.request.method == 'GET':
-            return Response[AllowAny()]
-        return Response[IsAuthenticated()]
+            return [AllowAny()]
+        return [IsAuthenticated()]
     
     def get(self, request):
         items = MenuItem.objects.select_related('category').filter(is_available=True)
@@ -102,8 +102,8 @@ class MenuItemListView(APIView):
 class MenuItemDetailView(APIView):
     def get_permissions(self):
         if self.request.method =='GET':
-            return Response[AllowAny()]
-        return Response[IsAuthenticated()]
+            return [AllowAny()]
+        return [IsAuthenticated()]
     def get_object(self, pk):
         try:
             return MenuItem.objects.select_related('category').get(pk=pk)
@@ -119,7 +119,7 @@ class MenuItemDetailView(APIView):
         return Response(serializer.data)
 
     def patch(self, request, pk):
-        if not request.user.is_admin_user:
+        if not request.user.is_admin:
             return Response({'error': 'Only admins can update menu items'},
                             status=status.HTTP_403_FORBIDDEN)
         item = self.get_object(pk)
@@ -133,7 +133,7 @@ class MenuItemDetailView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, pk):
-        if not request.user.is_admin_user:
+        if not request.user.is_admin:
             return Response({'error': 'Only admins can delete menu items'},
                             status=status.HTTP_403_FORBIDDEN)
         item = self.get_object(pk)
