@@ -41,6 +41,15 @@ class ShawarmaOption(models.Model):
     def __str__(self):
         return f"{self.name} - ₦{self.price}"
     
+class RiceExtra(models.Model):
+    name = models.CharField(max_length=50)  # Plantain, Coleslaw etc
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    is_available = models.BooleanField(default=True)
+    max_quantity = models.PositiveIntegerField(default=5)
+
+    def __str__(self):
+        return f"{self.name} - ₦{self.price}"
+    
 class ShawarmaExtra(models.Model):
     name = models.CharField(max_length=50)
     price = models.DecimalField(max_digits=10, decimal_places=2)
