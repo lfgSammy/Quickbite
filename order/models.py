@@ -154,7 +154,7 @@ class OrderItemDrink(models.Model):
         OrderItem, on_delete=models.CASCADE, related_name='drinks')
     drink_name = models.CharField(max_length=100)
     drink_price = models.DecimalField(max_digits=10, decimal_places=2)
-    quantity = models.PositiveIntegerField(default=1)
+    quantity = models.PositiveIntegerField()
 
     def __str__(self):
         return f"{self.drink_name} x{self.quantity}"
