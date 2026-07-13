@@ -3,78 +3,12 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from .models import Cart, CartItem, Order, OrderItem
+from .models import (Cart, CartItem, CartItemRiceExtra,
+                     CartItemShawarmaExtra, CartItemDrink,
+                     Order, OrderItem, OrderItemRiceExtra,
+                     OrderItemShawarmaExtra, OrderItemDrink)
 from .serializers import CartSerializer, CartItemSerializer, OrderSerializer
-from menu.models import MenuItem
-from django.db.models import Sum, Count
-from django.utils import timezone
-from datetime import timedelta
-
-class AdminDashboardView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        if not request.user.is_admin_user:
-            return Response({'error':'Admin access required'},
-                            status=status.HTTP_403_FORBIDDEN)
-        
-        today = timezone.now().date()
-        week_ago = today - timedelta(days=7)
-        month_ago = today -timedelta(days=30)
-
-        #total orders
-        total_orders = Order.objects.count()
-        #don't forget
-        today_orders = Order.objects.filter(created_at__date=today).count()
-
-        #revenue
-        total_revenue = Order.objects.filter(
-            status__in = ['paid','preparing','ready','collected']
-        ).aggregate(total=Sum('total_amount'))['total'] or 0
-
-        today_revenue = Order.objects.filter(
-            created_at__today = today,
-            status__in = ['paid','preparing','ready','collected']
-        ).aggregate(total=Sum('total_amount'))['total'] or 0
-
-        weekly_revenue = Order.objects.filter(
-            created_at__date__gte = week_ago,
-            status__in = ['paid', 'preparing', 'ready','collected']
-        ).aggregate(total = Sum('total_amount'))['total'] or 0
-
-        #order status breakdown
-        status_breakdown = Order.objects.values('status').annotate(
-            count=Count('id')
-        )
-
-        #popular items
-        popular_items = OrderItem.objects.values(
-            'menu_item__name'
-        ).annotate(
-            total_ordered=Sum('quantity')
-        ).order_by('-total_ordered')[:5]
-
-        #pending orders
-        pending_orders = Order.objects.filter(
-            status__in = ['paid', 'preparing']
-        ).select_related('customer').prefetch_related(
-            'items__menu_item'
-        ).order_by('pickup_time')
-
-        pending_serializer = OrderSerializer(pending_orders, many=True)
-
-        return Response({
-              'overview': {
-                'total_orders': total_orders,
-                'today_orders': today_orders,
-                'total_revenue': total_revenue,
-                'today_revenue': today_revenue,
-                'weekly_revenue': weekly_revenue,
-            },
-            'status_breakdown': list(status_breakdown),
-            'popular_items': list(popular_items),
-            'pending_orders': pending_serializer.data
-        })
+from menu.models import MenuItem, MenuItemSize, RiceType, ShawarmaOption, RiceExtra, ShawarmaExtra, Drink
 
 
 class CartView(APIView):
@@ -85,31 +19,7 @@ class CartView(APIView):
         serializer = CartSerializer(cart)
         return Response(serializer.data)
 
-    def post(self, request):
-        # add item to cart
-        cart, created = Cart.objects.get_or_create(customer=request.user)
-        menu_item_id = request.data.get('menu_item_id')
-        quantity = int(request.data.get('quantity', 1))
-
-        menu_item = MenuItem.objects.filter(
-            id=menu_item_id, is_available=True).first()
-        if not menu_item:
-            return Response({'error': 'Menu item not found or unavailable'},
-                            status=status.HTTP_404_NOT_FOUND)
-
-        cart_item, created = CartItem.objects.get_or_create(
-            cart=cart, menu_item=menu_item)
-        if not created:
-            cart_item.quantity += quantity
-        else:
-            cart_item.quantity = quantity
-        cart_item.save()
-
-        serializer = CartSerializer(cart)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
     def delete(self, request):
-        # clear entire cart
         cart = Cart.objects.filter(customer=request.user).first()
         if cart:
             cart.items.all().delete()
@@ -119,23 +29,115 @@ class CartView(APIView):
 class CartItemView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def patch(self, request, item_id):
-        cart = Cart.objects.filter(customer=request.user).first()
-        if not cart:
-            return Response({'error': 'Cart not found'},
+    def post(self, request):
+        cart, created = Cart.objects.get_or_create(customer=request.user)
+
+        menu_item_id = request.data.get('menu_item_id')
+        quantity = int(request.data.get('quantity', 1))
+        size_id = request.data.get('size_id')
+        rice_type_id = request.data.get('rice_type_id')
+        shawarma_option_id = request.data.get('shawarma_option_id')
+        rice_extras = request.data.get('rice_extras', [])
+        shawarma_extras = request.data.get('shawarma_extras', [])
+        drinks = request.data.get('drinks', [])
+
+        # validate menu item
+        menu_item = MenuItem.objects.filter(
+            id=menu_item_id, is_available=True).first()
+        if not menu_item:
+            return Response({'error': 'Menu item unavailable'},
                             status=status.HTTP_404_NOT_FOUND)
-        cart_item = CartItem.objects.filter(id=item_id, cart=cart).first()
-        if not cart_item:
-            return Response({'error': 'Item not found in cart'},
-                            status=status.HTTP_404_NOT_FOUND)
-        quantity = request.data.get('quantity')
-        if not quantity or int(quantity) < 1:
-            return Response({'error': 'Quantity must be at least 1'},
-                            status=status.HTTP_400_BAD_REQUEST)
-        cart_item.quantity = int(quantity)
-        cart_item.save()
+
+        # validate based on item type
+        if menu_item.item_type == 'rice':
+            if not size_id:
+                return Response({'error': 'Size is required for rice items'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            size = MenuItemSize.objects.filter(
+                id=size_id, menu_item=menu_item).first()
+            if not size:
+                return Response({'error': 'Invalid size for this menu item'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            rice_type = None
+            if rice_type_id:
+                rice_type = RiceType.objects.filter(id=rice_type_id).first()
+            shawarma_option = None
+
+        elif menu_item.item_type == 'shawarma':
+            if not shawarma_option_id:
+                return Response(
+                    {'error': 'Shawarma option is required'},
+                    status=status.HTTP_400_BAD_REQUEST)
+            shawarma_option = ShawarmaOption.objects.filter(
+                id=shawarma_option_id,
+                menu_item=menu_item,
+                is_available=True
+            ).first()
+            if not shawarma_option:
+                return Response({'error': 'Invalid shawarma option'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            size = None
+            rice_type = None
+
+        with transaction.atomic():
+            # create cart item
+            cart_item = CartItem.objects.create(
+                cart=cart,
+                menu_item=menu_item,
+                size=size if menu_item.item_type == 'rice' else None,
+                rice_type=rice_type,
+                shawarma_option=shawarma_option,
+                quantity=quantity
+            )
+
+            # add rice extras
+            if menu_item.item_type == 'rice' and rice_extras:
+                for extra_data in rice_extras:
+                    extra = RiceExtra.objects.filter(
+                        id=extra_data.get('extra_id'),
+                        is_available=True
+                    ).first()
+                    if extra:
+                        qty = int(extra_data.get('quantity', 1))
+                        # enforce max quantity
+                        if qty > extra.max_quantity:
+                            qty = extra.max_quantity
+                        CartItemRiceExtra.objects.create(
+                            cart_item=cart_item,
+                            extra=extra,
+                            quantity=qty
+                        )
+
+            # add shawarma extras (toggles)
+            if menu_item.item_type == 'shawarma' and shawarma_extras:
+                for extra_data in shawarma_extras:
+                    extra = ShawarmaExtra.objects.filter(
+                        id=extra_data.get('extra_id'),
+                        is_available=True
+                    ).first()
+                    if extra:
+                        CartItemShawarmaExtra.objects.create(
+                            cart_item=cart_item,
+                            extra=extra,
+                            is_added=extra_data.get('is_added', True)
+                        )
+
+            # add drinks
+            if drinks:
+                for drink_data in drinks:
+                    drink = Drink.objects.filter(
+                        id=drink_data.get('drink_id'),
+                        is_available=True
+                    ).first()
+                    if drink:
+                        CartItemDrink.objects.create(
+                            cart_item=cart_item,
+                            drink=drink,
+                            quantity=int(drink_data.get('quantity', 1))
+                        )
+
         serializer = CartSerializer(cart)
-        return Response(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     def delete(self, request, item_id):
         cart = Cart.objects.filter(customer=request.user).first()
@@ -155,20 +157,23 @@ class OrderListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # admin and kitchen see all orders
-        # customers see only their own
-        if request.user.is_admin or request.user.is_kitchen:
+        if request.user.is_admin_user or request.user.is_kitchen:
             orders = Order.objects.select_related('customer').prefetch_related(
-                'items__menu_item').all().order_by('-created_at')
+                'items__rice_extras',
+                'items__shawarma_extras',
+                'items__drinks'
+            ).all().order_by('-created_at')
         else:
             orders = Order.objects.select_related('customer').prefetch_related(
-                'items__menu_item').filter(
-                customer=request.user).order_by('-created_at')
+                'items__rice_extras',
+                'items__shawarma_extras',
+                'items__drinks'
+            ).filter(customer=request.user).order_by('-created_at')
+
         serializer = OrderSerializer(orders, many=True)
         return Response(serializer.data)
 
     def post(self, request):
-        # customers only
         if not request.user.is_customer:
             return Response({'error': 'Only customers can place orders'},
                             status=status.HTTP_403_FORBIDDEN)
@@ -192,14 +197,61 @@ class OrderListView(APIView):
                 total_amount=total_amount,
                 status='pending'
             )
-            for cart_item in cart.items.all():
-                OrderItem.objects.create(
+
+            for cart_item in cart.items.prefetch_related(
+                'rice_extras__extra',
+                'shawarma_extras__extra',
+                'drinks__drink'
+            ).all():
+                # determine size and shawarma info
+                size_name = cart_item.size.name if cart_item.size else ''
+                size_price = cart_item.size.price if cart_item.size else 0
+                rice_type_name = cart_item.rice_type.name if cart_item.rice_type else ''
+                shawarma_option_name = (cart_item.shawarma_option.name
+                                        if cart_item.shawarma_option else '')
+                shawarma_option_price = (cart_item.shawarma_option.price
+                                         if cart_item.shawarma_option else 0)
+
+                order_item = OrderItem.objects.create(
                     order=order,
                     menu_item=cart_item.menu_item,
+                    size_name=size_name,
+                    size_price=size_price,
+                    rice_type_name=rice_type_name,
+                    shawarma_option_name=shawarma_option_name,
+                    shawarma_option_price=shawarma_option_price,
                     quantity=cart_item.quantity,
-                    price_at_purchase=cart_item.menu_item.price
+                    item_total=cart_item.get_total()
                 )
-            # clear cart after order created
+
+                # freeze rice extras
+                for rice_extra in cart_item.rice_extras.all():
+                    OrderItemRiceExtra.objects.create(
+                        order_item=order_item,
+                        extra_name=rice_extra.extra.name,
+                        extra_price=rice_extra.extra.price,
+                        quantity=rice_extra.quantity
+                    )
+
+                # freeze shawarma extras
+                for shawarma_extra in cart_item.shawarma_extras.all():
+                    OrderItemShawarmaExtra.objects.create(
+                        order_item=order_item,
+                        extra_name=shawarma_extra.extra.name,
+                        extra_price=shawarma_extra.extra.price,
+                        is_added=shawarma_extra.is_added
+                    )
+
+                # freeze drinks
+                for drink in cart_item.drinks.all():
+                    OrderItemDrink.objects.create(
+                        order_item=order_item,
+                        drink_name=drink.drink.name,
+                        drink_price=drink.drink.price,
+                        quantity=drink.quantity
+                    )
+
+            # clear cart
             cart.items.all().delete()
 
         serializer = OrderSerializer(order)
@@ -212,8 +264,10 @@ class OrderDetailView(APIView):
     def get_object(self, order_id, user):
         try:
             order = Order.objects.select_related('customer').prefetch_related(
-                'items__menu_item').get(id=order_id)
-            # customers can only see their own orders
+                'items__rice_extras',
+                'items__shawarma_extras',
+                'items__drinks'
+            ).get(id=order_id)
             if user.is_customer and order.customer != user:
                 return None
             return order
@@ -229,8 +283,7 @@ class OrderDetailView(APIView):
         return Response(serializer.data)
 
     def patch(self, request, order_id):
-        # kitchen and admin can update order status
-        if not request.user.is_kitchen and not request.user.is_admin:
+        if not request.user.is_kitchen and not request.user.is_admin_user:
             return Response(
                 {'error': 'Only kitchen staff and admins can update order status'},
                 status=status.HTTP_403_FORBIDDEN)
@@ -241,10 +294,18 @@ class OrderDetailView(APIView):
                             status=status.HTTP_404_NOT_FOUND)
 
         new_status = request.data.get('status')
-        valid_statuses = ['pending', 'paid', 'preparing', 'ready', 'collected', 'cancelled']
+        valid_statuses = ['preparing', 'ready', 'cancelled']
+
         if new_status not in valid_statuses:
-            return Response({'error': f'Invalid status. Choose from {valid_statuses}'},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': f'Invalid status. Choose from {valid_statuses}'},
+                status=status.HTTP_400_BAD_REQUEST)
+
+        # can only update paid orders
+        if order.status not in ['paid', 'preparing']:
+            return Response(
+                {'error': f'Cannot update order with status: {order.status}'},
+                status=status.HTTP_400_BAD_REQUEST)
 
         order.status = new_status
         order.save()
@@ -256,8 +317,7 @@ class VerifyQRView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        # only kitchen and admin can verify QR codes
-        if not request.user.is_kitchen and not request.user.is_admin:
+        if not request.user.is_kitchen and not request.user.is_admin_user:
             return Response({'error': 'Not authorized'},
                             status=status.HTTP_403_FORBIDDEN)
 
@@ -276,8 +336,9 @@ class VerifyQRView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
 
         if order.status != 'ready':
-            return Response({'error': f'Order is not ready for collection. Current status: {order.status}'},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': f'Order not ready. Current status: {order.status}'},
+                status=status.HTTP_400_BAD_REQUEST)
 
         order.status = 'collected'
         order.save()
@@ -286,4 +347,62 @@ class VerifyQRView(APIView):
         return Response({
             'message': 'Order collected successfully',
             'order': serializer.data
-        }) 
+        })
+
+
+class AdminDashboardView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_admin_user:
+            return Response({'error': 'Admin access required'},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        from django.db.models import Sum, Count
+        from django.utils import timezone
+        from datetime import timedelta
+
+        today = timezone.now().date()
+        week_ago = today - timedelta(days=7)
+
+        total_orders = Order.objects.count()
+        today_orders = Order.objects.filter(created_at__date=today).count()
+
+        total_revenue = Order.objects.filter(
+            status__in=['paid', 'preparing', 'ready', 'collected']
+        ).aggregate(total=Sum('total_amount'))['total'] or 0
+
+        today_revenue = Order.objects.filter(
+            created_at__date=today,
+            status__in=['paid', 'preparing', 'ready', 'collected']
+        ).aggregate(total=Sum('total_amount'))['total'] or 0
+
+        weekly_revenue = Order.objects.filter(
+            created_at__date__gte=week_ago,
+            status__in=['paid', 'preparing', 'ready', 'collected']
+        ).aggregate(total=Sum('total_amount'))['total'] or 0
+
+        status_breakdown = Order.objects.values('status').annotate(
+            count=Count('id'))
+
+        pending_orders = Order.objects.filter(
+            status__in=['paid', 'preparing']
+        ).select_related('customer').prefetch_related(
+            'items__rice_extras',
+            'items__shawarma_extras',
+            'items__drinks'
+        ).order_by('pickup_time')
+
+        pending_serializer = OrderSerializer(pending_orders, many=True)
+
+        return Response({
+            'overview': {
+                'total_orders': total_orders,
+                'today_orders': today_orders,
+                'total_revenue': total_revenue,
+                'today_revenue': today_revenue,
+                'weekly_revenue': weekly_revenue,
+            },
+            'status_breakdown': list(status_breakdown),
+            'pending_orders': pending_serializer.data
+        })

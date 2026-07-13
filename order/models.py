@@ -25,7 +25,7 @@ class CartItem(models.Model):
     shawarma_option = models.ForeignKey(ShawarmaOption, on_delete=models.SET_NULL,
                                         null=True, blank=True)
     quantity = models.PositiveIntegerField(default=1)
-    created_at = models.DateTimeField(auto_now_add=True)
+    # created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.menu_item.name} x {self.quantity}"
@@ -125,7 +125,7 @@ class OrderItem(models.Model):
     shawarma_option_name = models.CharField(max_length=20, blank=True)
     shawarma_option_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     quantity = models.PositiveIntegerField(default=1)
-    item_total = models.DecimalField(max_digits=10, decimal_places=2)
+    item_total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
     def __str__(self):
         return f"{self.menu_item.name} x {self.quantity}"
@@ -141,7 +141,7 @@ class OrderItemRiceExtra(models.Model):
     
 class OrderItemShawarmaExtra(models.Model):
     order_item = models.ForeignKey(OrderItem, on_delete=models.CASCADE, 
-                                   related_name='shawarma extra')
+                                   related_name='shawarma_extra')
     extra_name = models.CharField(max_length=50)
     extra_price = models.DecimalField(max_digits=10, decimal_places=2)
     is_added = models.BooleanField(default=True)

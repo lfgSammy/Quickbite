@@ -9,7 +9,7 @@ class MenuItem(models.Model):
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True)
     image = CloudinaryField('menu_item', blank=True, null=True)
-    item_type = models.CharField(max_length=15, choices=ITEM_TYPE)
+    item_type = models.CharField(max_length=15, choices=ITEM_TYPE, null=True)
     is_available = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -60,7 +60,7 @@ class ShawarmaExtra(models.Model):
     
 class Drink(models.Model):
     name = models.CharField(max_length=20)
-    price = models.DecimalField(max_length=10, decimal_places=2)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
     image = CloudinaryField('drink',blank=True, null=True)
     is_available = models.BooleanField(default=True)
 
