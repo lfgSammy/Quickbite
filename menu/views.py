@@ -6,9 +6,7 @@ from .models import MenuItem, RiceType, RiceExtra, ShawarmaExtra, Drink
 from .serializers import (MenuItemSerializer, RiceTypeSerializer,
                            RiceExtraSerializer, ShawarmaExtraSerializer,
                            DrinkSerializer)
-from drf_spectacular.utils import extend_schema
 
-@extend_schema(tags=['Menu'])
 class MenuItemListView(APIView):
     def get_permissions(self):
         if self.request.method == 'GET':
@@ -32,7 +30,6 @@ class MenuItemListView(APIView):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-@extend_schema(tags=['Menu'])
 class MenuItemDetailView(APIView):
     def get_permissions(self):
         if self.request.method == 'GET':
