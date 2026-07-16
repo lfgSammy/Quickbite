@@ -160,7 +160,7 @@ class OrderListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if request.user.is_admin_user or request.user.is_kitchen:
+        if request.user.is_admin or request.user.is_kitchen:
             orders = Order.objects.select_related('customer').prefetch_related(
                 'items__rice_extras',
                 'items__shawarma_extras',
@@ -287,7 +287,7 @@ class OrderDetailView(APIView):
         return Response(serializer.data)
 
     def patch(self, request, order_id):
-        if not request.user.is_kitchen and not request.user.is_admin_user:
+        if not request.user.is_kitchen and not request.user.is_admin:
             return Response(
                 {'error': 'Only kitchen staff and admins can update order status'},
                 status=status.HTTP_403_FORBIDDEN)
@@ -322,7 +322,7 @@ class VerifyQRView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        if not request.user.is_kitchen and not request.user.is_admin_user:
+        if not request.user.is_kitchen and not request.user.is_admin:
             return Response({'error': 'Not authorized'},
                             status=status.HTTP_403_FORBIDDEN)
 
@@ -360,7 +360,7 @@ class AdminDashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if not request.user.is_admin_user:
+        if not request.user.is_admin:
             return Response({'error': 'Admin access required'},
                             status=status.HTTP_403_FORBIDDEN)
 
