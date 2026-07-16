@@ -9,6 +9,7 @@ from drf_spectacular.utils import extend_schema
 from .models import User, Notification
 from .serializers import UserSerializer, NotificationSerializer, LoginSerializer, RegisterSerializer
 
+
 def validate_email(email):
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return re.match(pattern, email)
@@ -66,6 +67,7 @@ class RegisterView(APIView):
             'refresh': str(refresh),
             'user': UserSerializer(user).data
         }, status=status.HTTP_201_CREATED)
+
 
 class AssignRoleView(APIView):
     permission_classes = [IsAuthenticated]
