@@ -25,7 +25,7 @@ class CartItem(models.Model):
     shawarma_option = models.ForeignKey(ShawarmaOption, on_delete=models.SET_NULL,
                                         null=True, blank=True)
     quantity = models.PositiveIntegerField(default=1)
-    # created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.menu_item.name} x {self.quantity}"
