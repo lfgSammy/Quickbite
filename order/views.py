@@ -9,8 +9,9 @@ from .models import (Cart, CartItem, CartItemRiceExtra,
                      OrderItemShawarmaExtra, OrderItemDrink)
 from .serializers import CartSerializer, CartItemSerializer, OrderSerializer
 from menu.models import MenuItem, MenuItemSize, RiceType, ShawarmaOption, RiceExtra, ShawarmaExtra, Drink
+from drf_spectacular.utils import extend_schema
 
-
+@extend_schema(tags=['Cart'])
 class CartView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -26,6 +27,7 @@ class CartView(APIView):
         return Response({'message': 'Cart cleared'})
 
 
+@extend_schema(tags=['Cart'])
 class CartItemView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -153,6 +155,7 @@ class CartItemView(APIView):
         return Response(serializer.data)
 
 
+@extend_schema(tags=['Cart'])
 class OrderListView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -258,6 +261,7 @@ class OrderListView(APIView):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
+@extend_schema(tags=['Cart'])
 class OrderDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -313,6 +317,7 @@ class OrderDetailView(APIView):
         return Response(serializer.data)
 
 
+@extend_schema(tags=['Cart'])
 class VerifyQRView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -350,6 +355,7 @@ class VerifyQRView(APIView):
         })
 
 
+@extend_schema(tags=['Cart'])
 class AdminDashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
