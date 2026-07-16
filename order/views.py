@@ -11,7 +11,6 @@ from .serializers import CartSerializer, CartItemSerializer, OrderSerializer
 from menu.models import MenuItem, MenuItemSize, RiceType, ShawarmaOption, RiceExtra, ShawarmaExtra, Drink
 from drf_spectacular.utils import extend_schema
 
-@extend_schema(tags=['Cart'])
 class CartView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -27,7 +26,6 @@ class CartView(APIView):
         return Response({'message': 'Cart cleared'})
 
 
-@extend_schema(tags=['Cart'])
 class CartItemView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -176,6 +174,7 @@ class OrderListView(APIView):
         serializer = OrderSerializer(orders, many=True)
         return Response(serializer.data)
 
+    @extend_schema(request=OrderSerializer)
     def post(self, request):
         if not request.user.is_customer:
             return Response({'error': 'Only customers can place orders'},
