@@ -29,6 +29,7 @@ class CartView(APIView):
 class CartItemView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(request=CartItemSerializer)
     def post(self, request):
         cart, created = Cart.objects.get_or_create(customer=request.user)
 
