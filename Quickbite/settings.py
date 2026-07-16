@@ -81,9 +81,9 @@ SIMPLE_JWT = {
 }
 
 SPECTACULAR_SETTINGS = {
-      'TITLE':'QuickBite',
-      'DESCRIPTION':'Contactless Food Ordering & Pick up System',
-      'VERSION':'1.0'
+    'TITLE':'QuickBite',
+    'DESCRIPTION':'Contactless Food Ordering & Pick up System',
+    'VERSION':'1.0',
 }
 
 PAYSTACK_SECRET_KEY = config('PAYSTACK_SECRET_KEY')
