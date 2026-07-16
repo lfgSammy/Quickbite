@@ -6,6 +6,7 @@ from .models import MenuItem, RiceType, RiceExtra, ShawarmaExtra, Drink
 from .serializers import (MenuItemSerializer, RiceTypeSerializer,
                            RiceExtraSerializer, ShawarmaExtraSerializer,
                            DrinkSerializer)
+from drf_spectacular.utils import extend_schema
 
 class MenuItemListView(APIView):
     def get_permissions(self):
@@ -20,8 +21,9 @@ class MenuItemListView(APIView):
         serializer = MenuItemSerializer(items, many=True)
         return Response(serializer.data)
 
+    @extend_schema(request=MenuItemSerializer)
     def post(self, request):
-        if not request.user.is_admin_user:
+        if not request.user.is_admin:
             return Response({'error': 'Only admins can add menu items'},
                             status=status.HTTP_403_FORBIDDEN)
         serializer = MenuItemSerializer(data=request.data)
@@ -51,8 +53,9 @@ class MenuItemDetailView(APIView):
         serializer = MenuItemSerializer(item)
         return Response(serializer.data)
 
+    @extend_schema(request=MenuItemSerializer)
     def patch(self, request, pk):
-        if not request.user.is_admin_user:
+        if not request.user.is_admin:
             return Response({'error': 'Only admins can update menu items'},
                             status=status.HTTP_403_FORBIDDEN)
         item = self.get_object(pk)
@@ -66,7 +69,7 @@ class MenuItemDetailView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, pk):
-        if not request.user.is_admin_user:
+        if not request.user.is_admin:
             return Response({'error': 'Only admins can delete menu items'},
                             status=status.HTTP_403_FORBIDDEN)
         item = self.get_object(pk)
@@ -88,8 +91,9 @@ class RiceTypeListView(APIView):
         serializer = RiceTypeSerializer(rice_types, many=True)
         return Response(serializer.data)
 
+    @extend_schema(request=RiceTypeSerializer)
     def post(self, request):
-        if not request.user.is_admin_user:
+        if not request.user.is_admin:
             return Response({'error': 'Only admins can add rice types'},
                             status=status.HTTP_403_FORBIDDEN)
         serializer = RiceTypeSerializer(data=request.data)
@@ -110,8 +114,9 @@ class RiceExtraListView(APIView):
         serializer = RiceExtraSerializer(extras, many=True)
         return Response(serializer.data)
 
+    @extend_schema(request=RiceExtraSerializer)
     def post(self, request):
-        if not request.user.is_admin_user:
+        if not request.user.is_admin:
             return Response({'error': 'Only admins can add extras'},
                             status=status.HTTP_403_FORBIDDEN)
         serializer = RiceExtraSerializer(data=request.data)
@@ -130,8 +135,9 @@ class RiceExtraDetailView(APIView):
         except RiceExtra.DoesNotExist:
             return None
 
+    @extend_schema(request=RiceExtraSerializer)
     def patch(self, request, pk):
-        if not request.user.is_admin_user:
+        if not request.user.is_admin:
             return Response({'error': 'Only admins can update extras'},
                             status=status.HTTP_403_FORBIDDEN)
         extra = self.get_object(pk)
@@ -156,8 +162,9 @@ class ShawarmaExtraListView(APIView):
         serializer = ShawarmaExtraSerializer(extras, many=True)
         return Response(serializer.data)
 
+    @extend_schema(request=ShawarmaExtraSerializer)
     def post(self, request):
-        if not request.user.is_admin_user:
+        if not request.user.is_admin:
             return Response({'error': 'Only admins can add shawarma extras'},
                             status=status.HTTP_403_FORBIDDEN)
         serializer = ShawarmaExtraSerializer(data=request.data)
@@ -170,8 +177,9 @@ class ShawarmaExtraListView(APIView):
 class ShawarmaExtraDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(request=ShawarmaExtraSerializer)
     def patch(self, request, pk):
-        if not request.user.is_admin_user:
+        if not request.user.is_admin:
             return Response({'error': 'Only admins can update shawarma extras'},
                             status=status.HTTP_403_FORBIDDEN)
         try:
@@ -197,8 +205,9 @@ class DrinkListView(APIView):
         serializer = DrinkSerializer(drinks, many=True)
         return Response(serializer.data)
 
+    @extend_schema(request=DrinkSerializer)
     def post(self, request):
-        if not request.user.is_admin_user:
+        if not request.user.is_admin:
             return Response({'error': 'Only admins can add drinks'},
                             status=status.HTTP_403_FORBIDDEN)
         serializer = DrinkSerializer(data=request.data)
@@ -212,7 +221,7 @@ class DrinkDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, pk):
-        if not request.user.is_admin_user:
+        if not request.user.is_admin:
             return Response({'error': 'Only admins can update drinks'},
                             status=status.HTTP_403_FORBIDDEN)
         try:
@@ -227,7 +236,7 @@ class DrinkDetailView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, pk):
-        if not request.user.is_admin_user:
+        if not request.user.is_admin:
             return Response({'error': 'Only admins can delete drinks'},
                             status=status.HTTP_403_FORBIDDEN)
         try:
