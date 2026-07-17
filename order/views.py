@@ -140,6 +140,8 @@ class CartItemView(APIView):
         serializer = CartSerializer(cart)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+
+    @extend_schema(responses={204:None})
     def delete(self, request, item_id):
         cart = Cart.objects.filter(customer=request.user).first()
         if not cart:
@@ -150,8 +152,7 @@ class CartItemView(APIView):
             return Response({'error': 'Item not found in cart'},
                             status=status.HTTP_404_NOT_FOUND)
         cart_item.delete()
-        serializer = CartSerializer(cart)
-        return Response(serializer.data)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 @extend_schema(tags=['Cart'])
