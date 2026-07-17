@@ -65,7 +65,6 @@ class CartItemSerializer(serializers.ModelSerializer):
         source='size',
         write_only=True,
         required=False,
-        allow_null=True
     )
     rice_type = RiceTypeSerializer(read_only=True)
     rice_type_id = serializers.PrimaryKeyRelatedField(
