@@ -45,6 +45,18 @@ class MenuItemSerializer(serializers.ModelSerializer):
     shawarma_options = ShawarmaOptionSerializer(many=True, read_only=True)
     image_url = serializers.SerializerMethodField()
 
+    def get_sizes(self, obj):
+        if obj.item_type == 'rice':
+            return MenuItemSerializer(obj.sizes.all(), many=True).data
+        return None
+    
+    def get_shawarma_options(self, obj):
+        if obj.item_type == 'shawarma':
+            return ShawarmaOptionSerializer(
+                obj.shawarma_options.filter(is_available=True), many= True
+            ).data
+        return None
+
     def get_image_url(self, obj):
         if obj.image:
             return obj.image.url
