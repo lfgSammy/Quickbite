@@ -6,8 +6,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from drf_spectacular.utils import extend_schema
-from .models import User, Notification
+from .models import User, Notification, OperatingHours
 from .serializers import UserSerializer, NotificationSerializer, LoginSerializer, RegisterSerializer
+from django.utils import timezone
 
 
 def validate_email(email):
@@ -132,7 +133,32 @@ class ProfileView(APIView):
             serializer.save()
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
+
+
+class RestaurantStatusView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        now = timezone.localtime()
+        current_day = now.weekday()
+        current_time = now.time()
+
+        hours = OperatingHours.objects.filter(day=current_day).first()
+        if not hours or not hours.is_open:
+            return Response({
+                'is_open': False,
+                'message': 'Restaurant is currently closed'
+            })
+
+        is_open = hours.open_time <= current_time <= hours.close_time
+        return Response({
+            'is_open': is_open,
+            'open_time': hours.open_time,
+            'close_time': hours.close_time,
+            'message': 'Restaurant is open' if is_open else 'Restaurant is currently closed'
+        })
+
+
 class NotificationListView(APIView):
     permission_classes = [IsAuthenticated]
 
