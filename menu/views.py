@@ -18,6 +18,11 @@ class MenuItemListView(APIView):
         items = MenuItem.objects.prefetch_related(
             'sizes', 'shawarma_options'
         ).filter(is_available=True)
+
+        search = request.query_params.get('search')
+        if search:
+            items = items.filter(name__icontains=search)
+
         serializer = MenuItemSerializer(items, many=True)
         return Response(serializer.data)
 
