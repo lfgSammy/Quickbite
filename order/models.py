@@ -121,6 +121,7 @@ class Order(models.Model):
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     pickup_time = models.DateTimeField()
     qr_code = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    special_instructions = models.TextField(blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
