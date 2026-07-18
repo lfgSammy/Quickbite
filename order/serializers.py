@@ -145,7 +145,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
         model = OrderItem
         fields = [
             'id', 'menu_item', 'size_name', 'size_price',
-            'rice_type_name', 'shawarma_option_name',
+            'rice_type_name', 'shawarma_option_name', 'special_instructions',
             'shawarma_option_price', 'quantity', 'item_total',
             'rice_extras', 'shawarma_extras', 'drinks'
         ]
