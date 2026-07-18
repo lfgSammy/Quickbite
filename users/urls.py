@@ -9,4 +9,5 @@ urlpatterns = [
     path('auth/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
     path('auth/profile/', views.ProfileView.as_view(), name='profile'),
     path('notifications/', views.NotificationListView.as_view(), name='notifications'),
+    path('restaurant/status/', views.RestaurantStatusView.as_view(), name='restaurant-status'),
 ]
