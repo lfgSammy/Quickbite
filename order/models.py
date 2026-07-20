@@ -140,6 +140,7 @@ class OrderItem(models.Model):
     shawarma_option_price = models.DecimalField(
         max_digits=10, decimal_places=2, default=0)
     quantity = models.PositiveIntegerField(default=1)
+    special_instructions = models.TextField(blank=True, default='')
     item_total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
     def __str__(self):
