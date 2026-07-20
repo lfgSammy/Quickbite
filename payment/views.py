@@ -95,7 +95,7 @@ class InitializePaymentView(APIView):
             }
         }
 
-        response = request.post(url, json=data, headers=headers)
+        response = requests.post(url, json=data, headers=headers)
         response_data = response.json()
 
         if not response_data.get('status'):
