@@ -16,6 +16,7 @@ import io
 import base64
 from django.core.mail import EmailMessage
 from django.conf import settings
+from drf_spectacular.utils import extend_schema
 
 
 def generate_qr_code(qr_data):
@@ -66,6 +67,7 @@ Thank you for choosing QuickBite!
 class InitializePaymentView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(request=PaymentSerializer)
     def post(self, request):
         order_id = request.data.get('order_id')
 
