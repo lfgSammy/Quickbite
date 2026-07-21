@@ -524,7 +524,6 @@ class OrderDetailView(APIView):
 class VerifyQRView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema()
     def post(self, request):
         if not request.user.is_kitchen and not request.user.is_admin:
             return Response({'error': 'Not authorized'},
