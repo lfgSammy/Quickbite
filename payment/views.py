@@ -118,6 +118,7 @@ class InitializePaymentView(APIView):
 class VerifyPaymentView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(request=PaymentSerializer)
     def post(self, request):
         reference = request.data.get('reference')
         if not reference:
