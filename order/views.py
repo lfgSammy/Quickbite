@@ -528,8 +528,7 @@ class VerifyQRView(APIView):
     @extend_schema(
             request=inline_serializer(name='VerifyQR',
                                       fields={
-                                          'qr_code':drf_serializers.CharField()
-                                      }), responses={200:OrderSerializer}
+                                          'qr_code':drf_serializers.CharField})
     )
     def post(self, request):
         if not request.user.is_kitchen and not request.user.is_admin:
