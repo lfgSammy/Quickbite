@@ -1,5 +1,6 @@
 from django.db import transaction
 from rest_framework import status
+from rest_framework import serializers as drf_serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -9,7 +10,7 @@ from .models import (Cart, CartItem, CartItemRiceExtra,
                      OrderItemShawarmaExtra, OrderItemDrink)
 from .serializers import CartSerializer, CartItemSerializer, OrderSerializer
 from menu.models import MenuItem, MenuItemSize, RiceType, ShawarmaOption, RiceExtra, ShawarmaExtra, Drink
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, inline_serializer
 
 class CartView(APIView):
     permission_classes = [IsAuthenticated]
@@ -520,10 +521,16 @@ class OrderDetailView(APIView):
         return Response(serializer.data)
 
 
-@extend_schema(tags=['Cart'])
 class VerifyQRView(APIView):
     permission_classes = [IsAuthenticated]
 
+
+    @extend_schema(
+            request=inline_serializer(name='VerifyQR',
+                                      fields={
+                                          'qr_code':drf_serializers.CharField()
+                                      }), responses={200:OrderSerializer}
+    )
     def post(self, request):
         if not request.user.is_kitchen and not request.user.is_admin:
             return Response({'error': 'Not authorized'},
