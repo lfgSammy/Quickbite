@@ -171,3 +171,51 @@ class NotificationListView(APIView):
     def patch(self, request):
         Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
         return Response({'message':'All notifications are read'})
+
+class OperatingHoursView(APIView):
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def get(self, request):
+        hours = OperatingHours.objects.all().order_by('day')
+        data = []
+        for h in hours:
+            data.append({
+                'day':h.get_day_display(),
+                'open_time':h.open_time,
+                'close_time':h.close_time,
+                'is_open':h.is_open
+            })
+        return Response(data)
+
+    def post(self, request):
+        if not request.user.is_admin:
+            return Response({'error':'Admin access is required'},
+                            status=status.HTTP_403_FORBIDDEN)
+        day = request.data.get('day')
+        open_time = request.data.get('open_time')
+        close_time = request.data.get('close_time')
+        is_open = request.data.get('is_open')
+
+        if day is None or not open_time or not close_time:
+            return Response({'error':'All fields are required'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        hours, created = OperatingHours.objects.update_or_create(
+            day=day,
+            defaults={
+                'open_time': open_time,
+                'close_time': close_time,
+                'is_open': is_open
+            }
+        )
+        return Response({
+            'day': hours.get_day_display(),
+            'open_time': hours.open_time,
+            'close_time': hours.close_time,
+            'is_open': hours.is_open
+        },status= status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    
