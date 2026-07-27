@@ -9,6 +9,8 @@ from order.models import (Order, OrderItem, OrderItemDrink, OrderItemRiceExtra,
 from menu.models import MenuItem, MenuItemSize, RiceType, RiceExtra,ShawarmaExtra,Drink,ShawarmaOption
 from order.serializers import OrderSerializer
 from drf_spectacular.utils import extend_schema
+from users.models import OperatingHours
+from django.utils import timezone
 
 @extend_schema(tags=['Cart'])
 class OrderListView(APIView):
@@ -46,6 +48,43 @@ class OrderListView(APIView):
         if not pickup_time:
             return Response({'error': 'Pickup time is required'},
                             status=status.HTTP_400_BAD_REQUEST)
+
+        now = timezone.localtime()
+        current_day = now.weekday()
+        current_time = now.time()
+
+        hours = OperatingHours.objects.filter(day=current_day).first()
+
+        if not hours or not hours.is_open:
+            return Response({'error':'Restaurant is currently closed'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        
+        if not (hours.open_time <= current_time <= hours.close_time):
+            return Response({'error':f'Restaurant is closed. '
+                                     f'Open hours: {hours.open_time.strftime("%I:%M %p")} - '
+                                     f'{hours.close_time.strftime("%I:%M %p")}'},
+                                     status=status.HTTP_400_BAD_REQUEST)
+        from datetime import datetime
+        try:
+            pickup_dt = datetime.fromisoformat(pickup_time.replace('Z', '+00:00'))
+            pickup_local = timezone.localtime(pickup_dt)
+            pickup_time_only = pickup_local.time()
+
+            if not (hours.open_time <= pickup_time_only <= hours.close_time):
+                return Response(
+                    {'error': f'Pickup time must be between '
+                          f'{hours.open_time.strftime("%I:%M %p")} and '
+                          f'{hours.close_time.strftime("%I:%M %p")}'},
+                          status = status.HTTP_400_BAD_REQUEST)
+
+            if pickup_dt <= timezone.now():
+                return Response({'error':'Pickup time must be in the future'},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+        except ValueError:
+            return Response({'error':"Invalid pickup time format"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        
 
         total_amount = cart.get_total()
 
