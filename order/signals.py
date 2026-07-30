@@ -3,24 +3,25 @@ from django.dispatch import receiver
 from .models import Order
 from users.models import Notification
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 import datetime
 
 User = get_user_model()
 
-@receiver(post_save, sender=Order)
-def handle_order_notification(sender, instance, created, **kwargs):
-    pickup_time = instance.pickup_time
 
+@receiver(post_save, sender=Order)
+def handle_order_notifications(sender, instance, created, **kwargs):
+    # safely format pickup time
+    pickup_time = instance.pickup_time
     if isinstance(pickup_time, str):
         try:
             pickup_time = datetime.datetime.fromisoformat(
-                pickup_time.replace('Z', '+00:00')
-            )
+                pickup_time.replace('Z', '+00:00'))
         except ValueError:
             pickup_time = None
 
     pickup_str = pickup_time.strftime("%I:%M %p") if pickup_time else 'N/A'
-    
+
     if created:
         kitchen_staff = User.objects.filter(role='kitchen')
         for staff in kitchen_staff:
@@ -28,37 +29,32 @@ def handle_order_notification(sender, instance, created, **kwargs):
                 user=staff,
                 message=f'New order #{instance.id} received. '
                         f'Total: ₦{instance.total_amount}. '
-                        f'Pickup: {instance.pickup_time.strftime("%I:%M %p")}'
+                        f'Pickup: {pickup_str}'
             )
     else:
         if instance.status == 'paid':
             Notification.objects.create(
-                user = instance.customer,
+                user=instance.customer,
                 message=f'Payment confirmed for Order #{instance.id}. '
                         f'Check your email for your QR code. '
-                        f'Pickup time: {instance.pickup_time.strftime("%I:%M %p")}'
+                        f'Pickup time: {pickup_str}'
             )
-
         elif instance.status == 'preparing':
             Notification.objects.create(
-                user = instance.customer,
-                message=f'Your order #{instance.id} is being prepared! '
-                        f'Please show your QR code at the outlet.'
+                user=instance.customer,
+                message=f'Your order #{instance.id} is now being prepared!'
             )
-
         elif instance.status == 'ready':
             Notification.objects.create(
-                user = instance.customer,
+                user=instance.customer,
                 message=f'Your order #{instance.id} is ready for pickup! '
                         f'Please show your QR code at the outlet.'
             )
-
         elif instance.status == 'collected':
             Notification.objects.create(
-                user = instance.customer,
-                message = f'Order #{instance.id} collected. Enjoy your meal!'
+                user=instance.customer,
+                message=f'Order #{instance.id} collected. Enjoy your meal!'
             )
-
         elif instance.status == 'cancelled':
             Notification.objects.create(
                 user=instance.customer,
