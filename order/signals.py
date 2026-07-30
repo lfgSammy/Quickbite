@@ -29,7 +29,7 @@ def handle_order_notification(sender, instance, created, **kwargs):
         elif instance.status == 'preparing':
             Notification.objects.create(
                 user = instance.customer,
-                message=f'Your order #{instance.id} is ready for pickup! '
+                message=f'Your order #{instance.id} is being prepared! '
                         f'Please show your QR code at the outlet.'
             )
 
