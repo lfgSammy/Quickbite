@@ -70,7 +70,7 @@ Thank you for choosing QuickBite!
     except Exception as e:
         print(f"Email error: {str(e)}")
 
-        
+
 
 class InitializePaymentView(APIView):
     permission_classes = [IsAuthenticated]
@@ -162,6 +162,10 @@ class VerifyPaymentView(APIView):
             order = payment.order
             order.status = 'paid'
             order.save()
+
+            print(f"Sending QR email to {order.customer.email}")  # add this
+            send_qr_code_email(order.customer, order)
+            print("Done sending email")
 
             send_qr_code_email(order.customer, order)
             
