@@ -139,7 +139,6 @@ DATABASES = {
         'PASSWORD':config('DB_PASSWORD'),
         'HOST':config('DB_HOST'),
         'PORT':config('DB_PORT'),
-        'URL': config('DATABASE_URL'),
         'OPTIONS':{
             'sslmode':'require',
         },
