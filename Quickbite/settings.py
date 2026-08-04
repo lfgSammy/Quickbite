@@ -134,9 +134,9 @@ WSGI_APPLICATION = 'Quickbite.wsgi.application'
 DATABASE_URL= config('DATABASE_URL', default=None)
 
 if DATABASE_URL:
-    DATABASE= {
-        'default': dj_database_url.parse(
-            DATABASE_URL,
+    DATABASES = {
+        'default': dj_database_url.config(
+            default=DATABASE_URL,
             conn_max_age=600,
             ssl_require=True
         )
@@ -146,13 +146,10 @@ else:
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
             'NAME': config('DB_NAME'),
-            'USER':config('DB_USER'),
-            'PASSWORD':config('DB_PASSWORD'),
-            'HOST':config('DB_HOST'),
-            'PORT':config('DB_PORT'),
-            'OPTIONS':{
-                'sslmode':'require',
-            },
+            'USER': config('DB_USER'),
+            'PASSWORD': config('DB_PASSWORD'),
+            'HOST': config('DB_HOST'),
+            'PORT': config('DB_PORT'),
         }
     }
 
