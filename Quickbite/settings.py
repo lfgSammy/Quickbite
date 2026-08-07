@@ -30,6 +30,9 @@ DEBUG = True
 
 ALLOWED_HOSTS = ["*"]
 CORS_ALLOWED_ORIGINS= ['http://localhost:3000',]
+CSRF_TRUSTED_ORIGINS = [
+    'https://quickbite-production-100f.up.railway.app',
+]
 
 
 # Application definition
