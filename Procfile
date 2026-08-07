@@ -1,1 +1,0 @@
-web: python manage.py createsuperuser --noinput --username admin --email admin@quickbite.com && gunicorn quickbite.wsgi --bind 0.0.0.0:$PORT
