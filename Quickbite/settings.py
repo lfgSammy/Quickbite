@@ -150,8 +150,6 @@ WSGI_APPLICATION = 'Quickbite.wsgi.application'
 
 DATABASE_URL= config('DATABASE_URL', default=None)
 
-DATABASE_URL = config('DATABASE_URL', default=None)
-
 if DATABASE_URL:
     DATABASES = {
         'default': dj_database_url.config(
@@ -167,6 +165,8 @@ else:
             'NAME': BASE_DIR / 'db.sqlite3',
         }
     }
+
+
 
 
 # Password validation
