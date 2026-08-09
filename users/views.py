@@ -70,6 +70,28 @@ class RegisterView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 
+class UserListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_admin:
+            return Response({'error': 'Only admins can view users'},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        users = User.objects.all().order_by('username')
+
+        search = request.query_params.get('search')
+        if search:
+            users = users.filter(username__icontains=search)
+
+        role = request.query_params.get('role')
+        if role:
+            users = users.filter(role=role)
+
+        serializer = UserSerializer(users, many=True)
+        return Response(serializer.data)
+
+
 class AssignRoleView(APIView):
     permission_classes = [IsAuthenticated]
 
