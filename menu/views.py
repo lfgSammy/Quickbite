@@ -2,8 +2,10 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from .models import MenuItem, RiceType, RiceExtra, ShawarmaExtra, Drink
-from .serializers import (MenuItemSerializer, RiceTypeSerializer,
+from .models import (MenuItem, MenuItemSize, ShawarmaOption, RiceType,
+                     RiceExtra, ShawarmaExtra, Drink)
+from .serializers import (MenuItemSerializer, MenuItemSizeSerializer,
+                           ShawarmaOptionSerializer, RiceTypeSerializer,
                            RiceExtraSerializer, ShawarmaExtraSerializer,
                            DrinkSerializer)
 from drf_spectacular.utils import extend_schema
@@ -82,6 +84,134 @@ class MenuItemDetailView(APIView):
             return Response({'error': 'Menu item not found'},
                             status=status.HTTP_404_NOT_FOUND)
         item.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class MenuItemSizeListView(APIView):
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def get(self, request, menu_item_id):
+        sizes = MenuItemSize.objects.filter(menu_item_id=menu_item_id)
+        serializer = MenuItemSizeSerializer(sizes, many=True)
+        return Response(serializer.data)
+
+    @extend_schema(request=MenuItemSizeSerializer)
+    def post(self, request, menu_item_id):
+        if not request.user.is_admin:
+            return Response({'error': 'Only admins can add sizes'},
+                            status=status.HTTP_403_FORBIDDEN)
+        menu_item = MenuItem.objects.filter(
+            id=menu_item_id, item_type='rice').first()
+        if not menu_item:
+            return Response({'error': 'Rice menu item not found'},
+                            status=status.HTTP_404_NOT_FOUND)
+        serializer = MenuItemSizeSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(menu_item=menu_item)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class MenuItemSizeDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self, pk):
+        try:
+            return MenuItemSize.objects.get(pk=pk)
+        except MenuItemSize.DoesNotExist:
+            return None
+
+    @extend_schema(request=MenuItemSizeSerializer)
+    def patch(self, request, pk):
+        if not request.user.is_admin:
+            return Response({'error': 'Only admins can update sizes'},
+                            status=status.HTTP_403_FORBIDDEN)
+        size = self.get_object(pk)
+        if not size:
+            return Response({'error': 'Size not found'},
+                            status=status.HTTP_404_NOT_FOUND)
+        serializer = MenuItemSizeSerializer(size, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        if not request.user.is_admin:
+            return Response({'error': 'Only admins can delete sizes'},
+                            status=status.HTTP_403_FORBIDDEN)
+        size = self.get_object(pk)
+        if not size:
+            return Response({'error': 'Size not found'},
+                            status=status.HTTP_404_NOT_FOUND)
+        size.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ShawarmaOptionListView(APIView):
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def get(self, request, menu_item_id):
+        options = ShawarmaOption.objects.filter(menu_item_id=menu_item_id)
+        serializer = ShawarmaOptionSerializer(options, many=True)
+        return Response(serializer.data)
+
+    @extend_schema(request=ShawarmaOptionSerializer)
+    def post(self, request, menu_item_id):
+        if not request.user.is_admin:
+            return Response({'error': 'Only admins can add shawarma options'},
+                            status=status.HTTP_403_FORBIDDEN)
+        menu_item = MenuItem.objects.filter(
+            id=menu_item_id, item_type='shawarma').first()
+        if not menu_item:
+            return Response({'error': 'Shawarma menu item not found'},
+                            status=status.HTTP_404_NOT_FOUND)
+        serializer = ShawarmaOptionSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(menu_item=menu_item)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ShawarmaOptionDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self, pk):
+        try:
+            return ShawarmaOption.objects.get(pk=pk)
+        except ShawarmaOption.DoesNotExist:
+            return None
+
+    @extend_schema(request=ShawarmaOptionSerializer)
+    def patch(self, request, pk):
+        if not request.user.is_admin:
+            return Response({'error': 'Only admins can update shawarma options'},
+                            status=status.HTTP_403_FORBIDDEN)
+        option = self.get_object(pk)
+        if not option:
+            return Response({'error': 'Shawarma option not found'},
+                            status=status.HTTP_404_NOT_FOUND)
+        serializer = ShawarmaOptionSerializer(option, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        if not request.user.is_admin:
+            return Response({'error': 'Only admins can delete shawarma options'},
+                            status=status.HTTP_403_FORBIDDEN)
+        option = self.get_object(pk)
+        if not option:
+            return Response({'error': 'Shawarma option not found'},
+                            status=status.HTTP_404_NOT_FOUND)
+        option.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
