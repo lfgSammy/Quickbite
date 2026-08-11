@@ -1,6 +1,7 @@
 import hmac
 import hashlib
 import requests
+import threading
 from django.conf import settings
 from django.utils import timezone
 from rest_framework import status
@@ -164,12 +165,13 @@ class VerifyPaymentView(APIView):
             order.status = 'paid'
             order.save()
 
-            print(f"Sending QR email to {order.customer.email}")  # add this
-            send_qr_code_email(order.customer, order)
-            print("Done sending email")
+            # Send the QR code email in the background so a slow/unreachable
+            # email provider can never delay or break the payment verification
+            # response the customer is waiting on.
+            threading.Thread(
+                target=send_qr_code_email, args=(order.customer, order), daemon=True
+            ).start()
 
-            send_qr_code_email(order.customer, order)
-            
             # notify customer
             Notification.objects.create(
                 user=order.customer,
