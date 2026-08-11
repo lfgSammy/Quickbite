@@ -9,6 +9,7 @@ urlpatterns = [
     path('menu/<int:menu_item_id>/shawarma-options/', views.ShawarmaOptionListView.as_view(), name='shawarma-options'),
     path('shawarma-options/<int:pk>/', views.ShawarmaOptionDetailView.as_view(), name='shawarma-option-detail'),
     path('rice-types/', views.RiceTypeListView.as_view(), name='rice-types'),
+    path('rice-types/<int:pk>/', views.RiceTypeDetailView.as_view(), name='rice-type-detail'),
     path('rice-extras/', views.RiceExtraListView.as_view(), name='rice-extras'),
     path('rice-extras/<int:pk>/', views.RiceExtraDetailView.as_view(), name='rice-extra-detail'),
     path('shawarma-extras/', views.ShawarmaExtraListView.as_view(), name='shawarma-extras'),
