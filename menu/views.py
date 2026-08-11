@@ -238,6 +238,42 @@ class RiceTypeListView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+class RiceTypeDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self, pk):
+        try:
+            return RiceType.objects.get(pk=pk)
+        except RiceType.DoesNotExist:
+            return None
+
+    @extend_schema(request=RiceTypeSerializer)
+    def patch(self, request, pk):
+        if not request.user.is_admin:
+            return Response({'error': 'Only admins can update rice types'},
+                            status=status.HTTP_403_FORBIDDEN)
+        rice_type = self.get_object(pk)
+        if not rice_type:
+            return Response({'error': 'Rice type not found'},
+                            status=status.HTTP_404_NOT_FOUND)
+        serializer = RiceTypeSerializer(rice_type, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        if not request.user.is_admin:
+            return Response({'error': 'Only admins can delete rice types'},
+                            status=status.HTTP_403_FORBIDDEN)
+        rice_type = self.get_object(pk)
+        if not rice_type:
+            return Response({'error': 'Rice type not found'},
+                            status=status.HTTP_404_NOT_FOUND)
+        rice_type.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class RiceExtraListView(APIView):
     def get_permissions(self):
         if self.request.method == 'GET':
@@ -285,6 +321,17 @@ class RiceExtraDetailView(APIView):
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    def delete(self, request, pk):
+        if not request.user.is_admin:
+            return Response({'error': 'Only admins can delete extras'},
+                            status=status.HTTP_403_FORBIDDEN)
+        extra = self.get_object(pk)
+        if not extra:
+            return Response({'error': 'Extra not found'},
+                            status=status.HTTP_404_NOT_FOUND)
+        extra.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class ShawarmaExtraListView(APIView):
     def get_permissions(self):
@@ -312,14 +359,19 @@ class ShawarmaExtraListView(APIView):
 class ShawarmaExtraDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
+    def get_object(self, pk):
+        try:
+            return ShawarmaExtra.objects.get(pk=pk)
+        except ShawarmaExtra.DoesNotExist:
+            return None
+
     @extend_schema(request=ShawarmaExtraSerializer)
     def patch(self, request, pk):
         if not request.user.is_admin:
             return Response({'error': 'Only admins can update shawarma extras'},
                             status=status.HTTP_403_FORBIDDEN)
-        try:
-            extra = ShawarmaExtra.objects.get(pk=pk)
-        except ShawarmaExtra.DoesNotExist:
+        extra = self.get_object(pk)
+        if not extra:
             return Response({'error': 'Extra not found'},
                             status=status.HTTP_404_NOT_FOUND)
         serializer = ShawarmaExtraSerializer(extra, data=request.data, partial=True)
@@ -327,6 +379,17 @@ class ShawarmaExtraDetailView(APIView):
             serializer.save()
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        if not request.user.is_admin:
+            return Response({'error': 'Only admins can delete shawarma extras'},
+                            status=status.HTTP_403_FORBIDDEN)
+        extra = self.get_object(pk)
+        if not extra:
+            return Response({'error': 'Extra not found'},
+                            status=status.HTTP_404_NOT_FOUND)
+        extra.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class DrinkListView(APIView):
