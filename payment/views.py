@@ -97,6 +97,7 @@ class InitializePaymentView(APIView):
             'email':request.user.email,
             'amount':int(order.total_amount*100), #paystack uses kobo
             'reference':f'order_{order.id}_{order.qr_code}',
+            'callback_url': f'{settings.FRONTEND_URL}/payment/callback',
             'metadata':{
                 'order_id':order.id,
                 'customer':request.user.username
