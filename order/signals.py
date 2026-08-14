@@ -5,6 +5,8 @@ from users.models import Notification
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 import datetime
+from django.core.mail import send_mail
+from django.conf import settings
 
 User = get_user_model()
 
@@ -45,6 +47,15 @@ def handle_order_notifications(sender, instance, created, **kwargs):
                 message=f'Your order #{instance.id} is now being prepared!'
             )
         elif instance.status == 'ready':
+            send_mail(
+                subject='Your QuickBite order is ready!',
+                message=f'''Hi {instance.customer.username}, your order #{instance.id} 
+                    is ready for pickup. Show your QR code at the outlet.''',
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[instance.customer.email],
+                fail_silently=True,
+            )
+            
             Notification.objects.create(
                 user=instance.customer,
                 message=f'Your order #{instance.id} is ready for pickup! '
