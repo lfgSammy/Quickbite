@@ -50,13 +50,13 @@ class CartItem(models.Model):
             e.extra.price
             for e in self.shawarma_extras.filter(is_added=True)
         )
-        return rice_extras + shawarma_extras
+        return (rice_extras + shawarma_extras) * self.quantity
 
     def get_drinks_total(self):
         return sum(
             d.drink.price * d.quantity
             for d in self.drinks.all()
-        )
+        ) * self.quantity
 
     def get_total(self):
         return (
