@@ -11,6 +11,8 @@ from .serializers import UserSerializer, NotificationSerializer, LoginSerializer
 from django.utils import timezone
 from social_django.utils import psa
 from rest_framework_simplejwt.tokens import RefreshToken
+import requests as http_requests
+from django.conf import settings
 
 
 def validate_email(email):
@@ -35,7 +37,73 @@ class GoogleOAuthView(APIView):
     def post(self, request):
         code = request.data.get('code')
         redirect_url = request.data.get('redirect_url')
+
+        if not code:
+            return Response({'error':'Authorization code is required'},
+                        status=status.HTTP_400_BAD_REQUEST)
         
+        token_url = 'https://oauth2.googleapis.com/token'
+        token_data = {
+            'code':code,
+            'client_id': settings.SOCIAL_AUTH_GOOGLE_OAUTH2_KEY,
+            'client_secret': settings.SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET,
+            'redirect_url':redirect_url,
+            'grant_type':'authorization_code',
+        }
+        token_response = http_requests.post(token_url, data=token_data)
+        token_json = token_response.json()
+
+        if 'error' in token_json:
+            return Response({'error':'Failed to exchange code for token'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        access_token = token_json.get('access_token')
+
+        # get user info from Google
+        user_info_url = 'https://www.googleapis.com/oauth2/v2/userinfo'
+        user_info_response = http_requests.get(
+            user_info_url,
+            headers={'Authorization': f'Bearer {access_token}'}
+        )
+        user_info = user_info_response.json()
+
+        email = user_info.get('email')
+        name = user_info.get('name', '')
+        google_id = user_info.get('id')
+
+        if not email:
+            return Response({'error': 'Could not get email from Google'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # get or create user
+        user = User.objects.filter(email=email).first()
+
+        if not user:
+            # create new user from Google account
+            username = email.split('@')[0]
+            # ensure username is unique
+            base_username = username
+            counter = 1
+            while User.objects.filter(username=username).exists():
+                username = f"{base_username}{counter}"
+                counter += 1
+
+            user = User.objects.create_user(
+                username=username,
+                email=email,
+                password=None,  # no password for OAuth users
+                role='customer'
+            )
+            # set unusable password
+            user.set_unusable_password()
+            user.save()
+
+        # generate JWT tokens
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+            'user': UserSerializer(user).data
+        })
 
 
 class RegisterView(APIView):
