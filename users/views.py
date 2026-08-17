@@ -9,6 +9,8 @@ from drf_spectacular.utils import extend_schema
 from .models import User, Notification, OperatingHours
 from .serializers import UserSerializer, NotificationSerializer, LoginSerializer, RegisterSerializer
 from django.utils import timezone
+from social_django.utils import psa
+from rest_framework_simplejwt.tokens import RefreshToken
 
 
 def validate_email(email):
@@ -26,6 +28,15 @@ def validate_password(password):
     if not re.search(r'[0-9]', password):
         errors.append('Password must contain at least a number')
     return errors
+
+class GoogleOAuthView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        code = request.data.get('code')
+        redirect_url = request.data.get('redirect_url')
+        
+
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
