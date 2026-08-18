@@ -30,7 +30,8 @@ SECRET_KEY = 'django-insecure-(arv5_0l!o(j_ev1#zm#+k$$!c5kc8my_eala&z@&5a$o6h5&2
 DEBUG = config('DEBUG', cast=bool, default=False)
 
 ALLOWED_HOSTS = ["*"]
-CORS_ALLOWED_ORIGINS= ['http://localhost:3000',]
+CORS_ALLOWED_ORIGINS= ['http://localhost:3000',
+                       'https://quickbiteview.vercel.app']
 FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
 CSRF_TRUSTED_ORIGINS = [
     'https://quickbite-production-100f.up.railway.app',
