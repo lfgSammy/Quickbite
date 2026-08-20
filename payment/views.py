@@ -2,6 +2,7 @@ import hmac
 import hashlib
 import requests
 import threading
+import uuid
 from django.conf import settings
 from django.utils import timezone
 from rest_framework import status
@@ -97,7 +98,10 @@ class InitializePaymentView(APIView):
         data = {
             'email':request.user.email,
             'amount':int(order.total_amount*100), #paystack uses kobo
-            'reference':f'order_{order.id}_{order.qr_code}',
+            # A fresh unique suffix per attempt — Paystack rejects a second
+            # initialize call that reuses a reference, which previously broke
+            # "Pay now" retries on a still-pending order.
+            'reference':f'order_{order.id}_{uuid.uuid4().hex[:10]}',
             'callback_url': f'{settings.FRONTEND_URL}/payment/callback',
             'metadata':{
                 'order_id':order.id,
@@ -155,13 +159,48 @@ class VerifyPaymentView(APIView):
             return Response({'error': 'Payment record not found'},
                             status=status.HTTP_404_NOT_FOUND)
 
+        order = payment.order
+
         if paystack_data['status'] == 'success':
+            # This exact payment attempt was already verified before (e.g. the
+            # customer reloaded the callback page) - just re-confirm, don't
+            # resend the email/notification or touch the order again.
+            if payment.status == 'success':
+                serializer = PaymentSerializer(payment)
+                return Response({
+                    'message': 'Payment already verified',
+                    'payment': serializer.data,
+                    'qr_code': str(order.qr_code),
+                    'order_id': order.id
+                })
+
+            # The order was already paid by a DIFFERENT payment attempt.
+            # Paystack genuinely processed a second real charge for the same
+            # order - record it truthfully, but do not silently treat it as a
+            # normal success (no duplicate QR email, no pretending nothing's
+            # wrong). Flag it so it gets refunded.
+            if order.status != 'pending':
+                payment.status = 'success'
+                payment.verified_at = timezone.now()
+                payment.save()
+
+                Notification.objects.create(
+                    user=order.customer,
+                    message=f'We detected a duplicate payment for Order #{order.id}. '
+                            f'This charge will be refunded - contact support if you '
+                            f'don\'t hear from us within 24 hours.'
+                )
+                return Response({
+                    'warning': 'This order was already paid by an earlier attempt. '
+                               'Your payment went through and will be refunded.',
+                    'order_id': order.id
+                })
+
             payment.status = 'success'
             payment.verified_at = timezone.now()
             payment.save()
 
             # update order status
-            order = payment.order
             order.status = 'paid'
             order.save()
 
@@ -217,11 +256,27 @@ class PaystackWebhookView(APIView):
             payment = Payment.objects.filter(
                 paystack_reference=reference).first()
             if payment and payment.status != 'success':
+                order = payment.order
+
+                if order.status != 'pending':
+                    # Order was already paid by a different attempt - this is
+                    # a genuine duplicate charge, not a replayed webhook.
+                    payment.status = 'success'
+                    payment.verified_at = timezone.now()
+                    payment.save()
+
+                    Notification.objects.create(
+                        user=order.customer,
+                        message=f'We detected a duplicate payment for Order #{order.id}. '
+                                f'This charge will be refunded - contact support if you '
+                                f'don\'t hear from us within 24 hours.'
+                    )
+                    return Response({'status': 'ok'})
+
                 payment.status = 'success'
                 payment.verified_at = timezone.now()
                 payment.save()
 
-                order = payment.order
                 order.status = 'paid'
                 order.save()
 
