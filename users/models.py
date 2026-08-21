@@ -1,5 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser
+import random
+from datetime import timezone, timedelta
 
 class User(AbstractUser):
     ROLE_CHOICES = [
@@ -25,6 +27,29 @@ class User(AbstractUser):
     @property
     def is_customer(self):
         return self.role == 'customer' and not self.is_superuser
+
+class PasswordRestOTP(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='password_reset')
+    code = models.CharField(max_length=6)
+    is_used = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateField()
+
+    def save(self, *args, **kwargs):
+        if not self.expires_at:
+            self.expires_at= timezone.now() + timedelta(minutes=10)
+        super().save(*args, **kwargs)
+
+    def is_valid(self):
+        return not self.is_used and timezone.now() < self.expires_at
+
+    @staticmethod
+    def generate_codes():
+        return str(random.randint(100000, 999999))
+
+    def __str__(self):
+        return f"Password reset OTP for{self.user.username}"
+    
     
 
 class OperatingHours(models.Model):
