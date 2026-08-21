@@ -228,7 +228,10 @@ class ProfileView(APIView):
         serializer = UserSerializer(request.user)
         return Response(serializer.data)
 
-    @extend_schema(request=UserSerializer(partial=True))
+    @extend_schema(
+            request=UserSerializer(partial=True),
+            responses={200: UserSerializer},
+        )
     def patch(self, request):
         serializer = UserSerializer(request.user, data=request.data, partial=True)
         if serializer.is_valid():
