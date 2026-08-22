@@ -13,6 +13,8 @@ from social_django.utils import psa
 from rest_framework_simplejwt.tokens import RefreshToken
 import requests as http_requests
 from django.conf import settings
+from django.core.mail import send_mail
+from .models import PasswordResetOTP
 
 
 def validate_email(email):
@@ -148,6 +150,139 @@ class RegisterView(APIView):
             'user': UserSerializer(user).data
         }, status=status.HTTP_201_CREATED)
 
+class ForgotPasswordView(APIView):
+    permission_classes= [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email')
+        if not email:
+            return Response({'error':'Email is required'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        user= User.objects.filter(email=email).first()
+        if not user:
+            return Response({'message':'OTP sent'})
+
+        PasswordResetOTP.objects.filter(
+            user=user, is_used=False).update(is_used=True)
+
+        code = PasswordResetOTP.generate_codes()
+        PasswordResetOTP.objects.create(user=user, code=code)
+
+        send_mail(
+            subject= 'Quickbite - Password reset OTP',
+            message='''
+
+Hi {user.username},
+
+You requested a password reset for your QuickBite account.
+
+Your OTP is: {code}
+
+This code expires in 10 minutes.
+
+If you did not request this, please ignore this email.
+
+QuickBite Team
+            ''',
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            fail_silently=True,
+        )
+
+        return Response({'message': 'If this email exists, an OTP has been sent'})
+
+
+class VerifyResetOTPView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email')
+        code = request.data.get('code')
+
+        if not email or not code:
+            return Response({'error': 'Email and OTP are required'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.filter(email=email).first()
+        if not user:
+            return Response({'error': 'Invalid OTP'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        otp = PasswordResetOTP.objects.filter(
+            user=user,
+            code=code,
+            is_used=False
+        ).order_by('-created_at').first()
+
+        if not otp:
+            return Response({'error': 'Invalid OTP'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if not otp.is_valid():
+            return Response({'error': 'OTP has expired. Request a new one.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # mark OTP as used
+        otp.is_used = True
+        otp.save()
+
+        # generate a temporary reset token
+        import secrets
+        reset_token = secrets.token_urlsafe(32)
+
+        # store reset token temporarily
+        from django.core.cache import cache
+        cache.set(f'password_reset_{reset_token}', user.id, timeout=600)
+
+        return Response({
+            'message': 'OTP verified successfully',
+            'reset_token': reset_token
+        })
+
+
+class ResetPasswordView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        reset_token = request.data.get('reset_token')
+        new_password = request.data.get('new_password')
+        confirm_password = request.data.get('confirm_password')
+
+        if not reset_token or not new_password:
+            return Response({'error': 'Reset token and new password are required'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if new_password != confirm_password:
+            return Response({'error': 'Passwords do not match'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # validate password strength
+        password_errors = validate_password(new_password)
+        if password_errors:
+            return Response({'error': password_errors},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # get user from reset token
+        from django.core.cache import cache
+        user_id = cache.get(f'password_reset_{reset_token}')
+
+        if not user_id:
+            return Response({'error': 'Invalid or expired reset token'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.filter(id=user_id).first()
+        if not user:
+            return Response({'error': 'User not found'},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        # update password
+        user.set_password(new_password)
+        user.save()
+
+        # delete reset token from cache
+        cache.delete(f'password_reset_{reset_token}')
+
+        return Response({'message': 'Password reset successfully. You can now login.'})
 
 class UserListView(APIView):
     permission_classes = [IsAuthenticated]
