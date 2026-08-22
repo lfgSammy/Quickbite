@@ -28,7 +28,7 @@ class User(AbstractUser):
     def is_customer(self):
         return self.role == 'customer' and not self.is_superuser
 
-class PasswordRestOTP(models.Model):
+class PasswordResetOTP(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='password_reset')
     code = models.CharField(max_length=6)
     is_used = models.BooleanField(default=False)
