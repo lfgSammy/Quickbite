@@ -76,8 +76,11 @@ class GoogleOAuthView(APIView):
             return Response({'error': 'Could not get email from Google'},
                             status=status.HTTP_400_BAD_REQUEST)
 
+        # normalize so this matches an existing account regardless of casing
+        email = email.lower()
+
         # get or create user
-        user = User.objects.filter(email=email).first()
+        user = User.objects.filter(email__iexact=email).first()
 
         if not user:
             # create new user from Google account
@@ -120,19 +123,22 @@ class RegisterView(APIView):
 
         if not username or not email or not password:
             return Response({'error':'All fields are required'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
+        # normalize so "User@x.com" and "user@x.com" are treated as the same email
+        email = email.lower()
+
         if not validate_email(email):
             return Response({'error':'Invalid email format'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         # --- FIX 1: Invoke the validation function ---
         password_errors = validate_password(password)
         if password_errors:
             return Response({'error': password_errors}, status=status.HTTP_400_BAD_REQUEST)
-      
+
         if User.objects.filter(username=username).exists():
             return Response({'error':'Username already exist'}, status=status.HTTP_400_BAD_REQUEST)
-            
-        if User.objects.filter(email=email).exists():
+
+        if User.objects.filter(email__iexact=email).exists():
             return Response({'error':'Email already exist'}, status=status.HTTP_400_BAD_REQUEST)
         
         user = User.objects.create_user(
