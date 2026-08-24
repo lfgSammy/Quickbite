@@ -26,6 +26,15 @@ class UserSerializer(serializers.ModelSerializer):
         fields = ['id', 'username','email','phone_number','role']
         read_only_fields = ['role']
 
+    def validate_email(self, value):
+        normalized = value.lower()
+        qs = User.objects.filter(email__iexact=normalized)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError('user with this email already exists.')
+        return normalized
+
 class NotificationSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only= True)
     class Meta:
