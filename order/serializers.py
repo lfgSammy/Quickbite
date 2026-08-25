@@ -91,6 +91,24 @@ class CartItemSerializer(serializers.ModelSerializer):
     def get_total(self, obj):
         return obj.get_total()
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        item_type = instance.menu_item.item_type
+
+        if item_type == 'rice':
+            data.pop('shawarma_option', None)
+            data.pop('shawarma_extras', None)
+
+        elif item_type == 'shawarma':
+            data.pop('size', None)
+            data.pop('rice_type', None)
+            data.pop('rice_extras', None)
+
+        if not instance.drink.exists():
+            data.pop('drink', None)
+
+        return data
+
     class Meta:
         model = CartItem
         fields = [
@@ -140,6 +158,31 @@ class OrderItemSerializer(serializers.ModelSerializer):
     rice_extras = OrderItemRiceExtraSerializer(many=True, read_only=True)
     shawarma_extras = OrderItemShawarmaExtraSerializer(many=True, read_only=True)
     drinks = OrderItemDrinkSerializer(many=True, read_only=True)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        
+        # determine item type from stored data
+        is_shawarma = bool(instance.shawarma_option_name)
+
+        if is_shawarma:
+            # remove rice fields
+            data.pop('size_name', None)
+            data.pop('size_price', None)
+            data.pop('rice_type_name', None)
+            data.pop('rice_extras', None)
+        else:
+            # remove shawarma fields
+            data.pop('shawarma_option_name', None)
+            data.pop('shawarma_option_price', None)
+            data.pop('shawarma_extras', None)
+
+        # remove drinks if empty
+        if not instance.drinks.exists():
+            data.pop('drinks', None)
+
+        return data
+
 
     class Meta:
         model = OrderItem
