@@ -104,8 +104,8 @@ class CartItemSerializer(serializers.ModelSerializer):
             data.pop('rice_type', None)
             data.pop('rice_extras', None)
 
-        if not instance.drink.exists():
-            data.pop('drink', None)
+        if not instance.drinks.exists():
+            data.pop('drinks', None)
 
         return data
 
