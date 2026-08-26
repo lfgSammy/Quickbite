@@ -10,7 +10,6 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
-import sys
 from pathlib import Path
 from decouple import config
 from datetime import timedelta
@@ -108,12 +107,18 @@ REST_FRAMEWORK = {
     },
 }
 
-# Production hardening. Skipped under DEBUG so local http:// still works, and
-# under the test runner - which forces DEBUG=False, so SECURE_SSL_REDIRECT
-# would otherwise turn every test request into a 301.
-TESTING = 'test' in sys.argv
+# Production hardening, opt-in via an explicit flag rather than `not DEBUG`.
+#
+# DEBUG defaults to False, so keying off it turned this on for anyone running
+# locally without DEBUG in their .env - and SECURE_SSL_REDIRECT then answered
+# every plain-http request with a 301 to https that the dev server can't
+# serve. Failing closed on security is usually right; failing closed in a way
+# that silently breaks every local request is not.
+#
+# Set PRODUCTION=true in the Railway variables. Nothing else needs it.
+PRODUCTION = config('PRODUCTION', cast=bool, default=False)
 
-if not DEBUG and not TESTING:
+if PRODUCTION:
     SECURE_SSL_REDIRECT = True
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SECURE_HSTS_SECONDS = 31536000
