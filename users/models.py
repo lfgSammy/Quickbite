@@ -1,7 +1,9 @@
+import secrets
+from datetime import timedelta
+
 from django.db import models
 from django.contrib.auth.models import AbstractUser
-import random
-from datetime import timezone, timedelta
+from django.utils import timezone
 
 class User(AbstractUser):
     ROLE_CHOICES = [
@@ -33,7 +35,7 @@ class PasswordResetOTP(models.Model):
     code = models.CharField(max_length=6)
     is_used = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
-    expires_at = models.DateField()
+    expires_at = models.DateTimeField()
 
     def save(self, *args, **kwargs):
         if not self.expires_at:
@@ -45,7 +47,9 @@ class PasswordResetOTP(models.Model):
 
     @staticmethod
     def generate_codes():
-        return str(random.randint(100000, 999999))
+        # secrets, not random: a predictable PRNG makes a 6-digit reset
+        # code guessable from earlier codes.
+        return f'{secrets.randbelow(1000000):06d}'
 
     def __str__(self):
         return f"Password reset OTP for{self.user.username}"
