@@ -11,8 +11,10 @@ from order.serializers import OrderSerializer
 from drf_spectacular.utils import extend_schema
 from users.models import OperatingHours
 from django.utils import timezone
+from datetime import datetime
+from decimal import Decimal
 
-@extend_schema(tags=['Cart'])
+@extend_schema(tags=['Orders'])
 class OrderListView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -64,43 +66,78 @@ class OrderListView(APIView):
                                      f'Open hours: {hours.open_time.strftime("%I:%M %p")} - '
                                      f'{hours.close_time.strftime("%I:%M %p")}'},
                                      status=status.HTTP_400_BAD_REQUEST)
-        from datetime import datetime
         try:
             pickup_dt = datetime.fromisoformat(pickup_time.replace('Z', '+00:00'))
-            pickup_local = timezone.localtime(pickup_dt)
-            pickup_time_only = pickup_local.time()
-
-            if not (hours.open_time <= pickup_time_only <= hours.close_time):
-                return Response(
-                    {'error': f'Pickup time must be between '
-                          f'{hours.open_time.strftime("%I:%M %p")} and '
-                          f'{hours.close_time.strftime("%I:%M %p")}'},
-                          status = status.HTTP_400_BAD_REQUEST)
-
-            if pickup_dt <= timezone.now():
-                return Response({'error':'Pickup time must be in the future'},
-                                status=status.HTTP_400_BAD_REQUEST)
-
-        except ValueError:
-            return Response({'error':"Invalid pickup time format"},
+        except (ValueError, AttributeError):
+            return Response({'error': 'Invalid pickup time format'},
                             status=status.HTTP_400_BAD_REQUEST)
-        
 
-        total_amount = cart.get_total()
+        # A naive datetime would compare incorrectly against timezone.now().
+        if timezone.is_naive(pickup_dt):
+            pickup_dt = timezone.make_aware(pickup_dt)
+
+        pickup_local = timezone.localtime(pickup_dt)
+
+        # Validate against the hours for the *pickup* day, not today's - a
+        # Saturday order for Sunday pickup was being checked against Saturday.
+        pickup_hours = OperatingHours.objects.filter(
+            day=pickup_local.weekday()).first()
+        if not pickup_hours or not pickup_hours.is_open:
+            return Response(
+                {'error': f'Restaurant is closed on '
+                          f'{pickup_local.strftime("%A")}'},
+                status=status.HTTP_400_BAD_REQUEST)
+
+        if not (pickup_hours.open_time <= pickup_local.time()
+                <= pickup_hours.close_time):
+            return Response(
+                {'error': f'Pickup time must be between '
+                          f'{pickup_hours.open_time.strftime("%I:%M %p")} and '
+                          f'{pickup_hours.close_time.strftime("%I:%M %p")} on '
+                          f'{pickup_local.strftime("%A")}'},
+                status=status.HTTP_400_BAD_REQUEST)
+
+        if pickup_dt <= timezone.now():
+            return Response({'error': 'Pickup time must be in the future'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+
+        cart_items = list(cart.items.select_related(
+            'menu_item', 'size', 'rice_type', 'shawarma_option'
+        ).prefetch_related(
+            'rice_extras__extra',
+            'shawarma_extras__extra',
+            'drinks__drink',
+        ))
+
+        # Re-check the cart at order time. A line can go stale between adding
+        # it and checking out - the item pulled from the menu, or its size /
+        # option deleted, which would otherwise price the line at 0.
+        for cart_item in cart_items:
+            if not cart_item.menu_item.is_available:
+                return Response(
+                    {'error': f'{cart_item.menu_item.name} is no longer '
+                              f'available. Please update your cart.'},
+                    status=status.HTTP_400_BAD_REQUEST)
+            if cart_item.get_base_price() <= 0:
+                return Response(
+                    {'error': f'The option you chose for '
+                              f'{cart_item.menu_item.name} is no longer '
+                              f'available. Please update your cart.'},
+                    status=status.HTTP_400_BAD_REQUEST)
+
+        total_amount = sum(
+            (item.get_total() for item in cart_items), Decimal('0.00'))
 
         with transaction.atomic():
             order = Order.objects.create(
                 customer=request.user,
-                pickup_time=pickup_time,
+                pickup_time=pickup_dt,
                 total_amount=total_amount,
                 status='pending'
             )
 
-            for cart_item in cart.items.prefetch_related(
-                'rice_extras__extra',
-                'shawarma_extras__extra',
-                'drinks__drink'
-            ).all():
+            for cart_item in cart_items:
                 # determine size and shawarma info
                 size_name = cart_item.size.name if cart_item.size else ''
                 size_price = cart_item.size.price if cart_item.size else 0
@@ -113,6 +150,7 @@ class OrderListView(APIView):
                 order_item = OrderItem.objects.create(
                     order=order,
                     menu_item=cart_item.menu_item,
+                    menu_item_name=cart_item.menu_item.name,
                     size_name=size_name,
                     size_price=size_price,
                     rice_type_name=rice_type_name,
@@ -156,7 +194,7 @@ class OrderListView(APIView):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
-@extend_schema(tags=['Cart'])
+@extend_schema(tags=['Orders'])
 class OrderDetailView(APIView):
     permission_classes = [IsAuthenticated]
 

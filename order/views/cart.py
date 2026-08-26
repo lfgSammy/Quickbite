@@ -10,12 +10,31 @@ from menu.models import MenuItem, MenuItemSize, RiceType, RiceExtra,ShawarmaExtr
 from order.serializers import CartItemSerializer, CartSerializer
 from drf_spectacular.utils import extend_schema, inline_serializer
 
+# Every relation the cart serializer and get_total() touch. Without these the
+# cart was ~8 queries per line: get_total() walks extras and drinks, then the
+# serializer re-reads all three plus the menu item.
+CART_PREFETCH = (
+    'items__menu_item',
+    'items__size',
+    'items__rice_type',
+    'items__shawarma_option',
+    'items__rice_extras__extra',
+    'items__shawarma_extras__extra',
+    'items__drinks__drink',
+)
+
+
+def load_cart(user):
+    """The user's cart with everything the serializer needs already loaded."""
+    cart, _ = Cart.objects.get_or_create(customer=user)
+    return Cart.objects.prefetch_related(*CART_PREFETCH).get(pk=cart.pk)
+
+
 class CartView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        cart, created = Cart.objects.get_or_create(customer=request.user)
-        serializer = CartSerializer(cart)
+        serializer = CartSerializer(load_cart(request.user))
         return Response(serializer.data)
 
     def delete(self, request):
@@ -79,6 +98,14 @@ class CartItemView(APIView):
             size = None
             rice_type = None
 
+        else:
+            # item_type is nullable on MenuItem, so an item with no type set
+            # used to fall through both branches and raise UnboundLocalError
+            # on the create() below - a 500 where a 400 belongs.
+            return Response(
+                {'error': 'This menu item is not configured for ordering yet'},
+                status=status.HTTP_400_BAD_REQUEST)
+
         with transaction.atomic():
             # create cart item
             cart_item = CartItem.objects.create(
@@ -136,7 +163,7 @@ class CartItemView(APIView):
                             quantity=int(drink_data.get('quantity', 1))
                         )
 
-        serializer = CartSerializer(cart)
+        serializer = CartSerializer(load_cart(request.user))
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
@@ -228,7 +255,7 @@ class UpdateCartItemView(APIView):
                         is_added=extra_data.get('is_added', True)
                     )
 
-        serializer = CartSerializer(cart)
+        serializer = CartSerializer(load_cart(request.user))
         return Response(serializer.data)
     
 class RevertOrderToCartView(APIView):
@@ -330,7 +357,7 @@ class RevertOrderToCartView(APIView):
             order.status = 'cancelled'
             order.save()
 
-        serializer = CartSerializer(cart)
+        serializer = CartSerializer(load_cart(request.user))
         return Response({
             'message': 'Order reverted to cart successfully',
             'cart': serializer.data
