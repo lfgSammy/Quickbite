@@ -35,6 +35,7 @@ def validate_password(password):
 
 class GoogleOAuthView(APIView):
     permission_classes = [AllowAny]
+    throttle_scope = 'login'
 
     def post(self, request):
         code = request.data.get('code')
@@ -113,6 +114,7 @@ class GoogleOAuthView(APIView):
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
+    throttle_scope = 'register'
 
     @extend_schema(request=RegisterSerializer)
     def post(self, request):
@@ -157,16 +159,22 @@ class RegisterView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 class ForgotPasswordView(APIView):
-    permission_classes= [AllowAny]
+    permission_classes = [AllowAny]
+    throttle_scope = 'password_reset'
+
+    # Identical for every request, so the response can't be used to test
+    # whether an address has an account here.
+    GENERIC_RESPONSE = {'message': 'OTP has been sent to your email'}
 
     def post(self, request):
         email = request.data.get('email')
         if not email:
-            return Response({'error':'Email is required'},
+            return Response({'error': 'Email is required'},
                             status=status.HTTP_400_BAD_REQUEST)
-        user= User.objects.filter(email=email).first()
+
+        user = User.objects.filter(email__iexact=email.lower()).first()
         if not user:
-            return Response({'message':'OTP sent'})
+            return Response(self.GENERIC_RESPONSE)
 
         PasswordResetOTP.objects.filter(
             user=user, is_used=False).update(is_used=True)
@@ -175,10 +183,8 @@ class ForgotPasswordView(APIView):
         PasswordResetOTP.objects.create(user=user, code=code)
 
         send_mail(
-            subject= 'Quickbite - Password reset OTP',
-            message='''
-
-Hi {user.username},
+            subject='QuickBite - Password reset OTP',
+            message=f'''Hi {user.username},
 
 You requested a password reset for your QuickBite account.
 
@@ -189,17 +195,18 @@ This code expires in 10 minutes.
 If you did not request this, please ignore this email.
 
 QuickBite Team
-            ''',
+''',
             from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[user.email],
             fail_silently=True,
         )
 
-        return Response({'message': 'If this email exists, an OTP has been sent'})
+        return Response(self.GENERIC_RESPONSE)
 
 
 class VerifyResetOTPView(APIView):
     permission_classes = [AllowAny]
+    throttle_scope = 'otp_verify'
 
     def post(self, request):
         email = request.data.get('email')
@@ -209,7 +216,7 @@ class VerifyResetOTPView(APIView):
             return Response({'error': 'Email and OTP are required'},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        user = User.objects.filter(email=email).first()
+        user = User.objects.filter(email__iexact=email.lower()).first()
         if not user:
             return Response({'error': 'Invalid OTP'},
                             status=status.HTTP_400_BAD_REQUEST)
@@ -248,6 +255,7 @@ class VerifyResetOTPView(APIView):
 
 class ResetPasswordView(APIView):
     permission_classes = [AllowAny]
+    throttle_scope = 'otp_verify'
 
     def post(self, request):
         reset_token = request.data.get('reset_token')
@@ -345,6 +353,7 @@ class AssignRoleView(APIView):
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
+    throttle_scope = 'login'
 
     @extend_schema(request=LoginSerializer)
     def post(self, request):
