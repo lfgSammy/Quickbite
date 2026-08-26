@@ -1,5 +1,7 @@
-from django.db import models
 import uuid
+from decimal import Decimal
+
+from django.db import models
 from users.models import User
 from menu.models import (MenuItem, MenuItemSize, RiceType, RiceExtra,
                          ShawarmaExtra, ShawarmaOption, Drink)
@@ -15,19 +17,26 @@ class Cart(models.Model):
         return f"{self.customer.username}'s Cart"
 
     def get_total(self):
-        return sum(item.get_total() for item in self.items.all())
+        return sum(
+            (item.get_total() for item in self.items.all()),
+            Decimal('0.00'),
+        )
 
 
 class CartItem(models.Model):
     cart = models.ForeignKey(
         Cart, on_delete=models.CASCADE, related_name='items')
     menu_item = models.ForeignKey(MenuItem, on_delete=models.CASCADE)
+    # CASCADE, not SET_NULL: size and shawarma_option are the *only* source of
+    # a line's base price. Nulling them on delete left the line priced at 0,
+    # which then got frozen into a real order as free food. If the option is
+    # gone, the line is meaningless - drop it with the option.
     size = models.ForeignKey(
-        MenuItemSize, on_delete=models.SET_NULL, null=True, blank=True)
+        MenuItemSize, on_delete=models.CASCADE, null=True, blank=True)
     rice_type = models.ForeignKey(
         RiceType, on_delete=models.SET_NULL, null=True, blank=True)
     shawarma_option = models.ForeignKey(
-        ShawarmaOption, on_delete=models.SET_NULL, null=True, blank=True)
+        ShawarmaOption, on_delete=models.CASCADE, null=True, blank=True)
     quantity = models.PositiveIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -39,24 +48,30 @@ class CartItem(models.Model):
             return self.size.price
         if self.shawarma_option:
             return self.shawarma_option.price
-        return 0
+        return Decimal('0.00')
 
     def get_extras_total(self):
         rice_extras = sum(
-            e.extra.price * e.quantity
-            for e in self.rice_extras.all()
+            (e.extra.price * e.quantity for e in self.rice_extras.all()),
+            Decimal('0.00'),
         )
+        # Filtered in Python, not with .filter(), so a prefetched
+        # shawarma_extras cache is reused instead of re-queried per line.
         shawarma_extras = sum(
-            e.extra.price
-            for e in self.shawarma_extras.filter(is_added=True)
+            (e.extra.price for e in self.shawarma_extras.all() if e.is_added),
+            Decimal('0.00'),
         )
         return (rice_extras + shawarma_extras) * self.quantity
 
     def get_drinks_total(self):
+        # Deliberately NOT multiplied by self.quantity. A drink carries its own
+        # quantity, so scaling it by the food quantity too billed 3 plates with
+        # one Coke attached as three Cokes. Extras above do scale, because an
+        # extra is per-plate and has no independent count.
         return sum(
-            d.drink.price * d.quantity
-            for d in self.drinks.all()
-        ) * self.quantity
+            (d.drink.price * d.quantity for d in self.drinks.all()),
+            Decimal('0.00'),
+        )
 
     def get_total(self):
         return (
@@ -133,6 +148,9 @@ class OrderItem(models.Model):
     order = models.ForeignKey(
         Order, on_delete=models.CASCADE, related_name='items')
     menu_item = models.ForeignKey(MenuItem, on_delete=models.PROTECT)
+    # Frozen like every other name on this model. Without it the kitchen queue
+    # could only show the size ("Medium"), never which dish to actually cook.
+    menu_item_name = models.CharField(max_length=100, blank=True)
     size_name = models.CharField(max_length=20, blank=True)
     size_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     rice_type_name = models.CharField(max_length=20, blank=True)
@@ -144,7 +162,7 @@ class OrderItem(models.Model):
     item_total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
     def __str__(self):
-        return f"{self.menu_item.name} x {self.quantity}"
+        return f"{self.menu_item_name} x {self.quantity}"
 
 
 class OrderItemRiceExtra(models.Model):
