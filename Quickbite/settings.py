@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import sys
 from pathlib import Path
 from decouple import config
 from datetime import timedelta
@@ -23,13 +24,18 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-(arv5_0l!o(j_ev1#zm#+k$$!c5kc8my_eala&z@&5a$o6h5&2'
+# No fallback on purpose: this key signs your JWTs, so booting with a known
+# default would be worse than failing loudly. Set SECRET_KEY in .env.
+SECRET_KEY = config('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', cast=bool, default=False)
 
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = config(
+    'ALLOWED_HOSTS',
+    default='localhost,127.0.0.1,quickbite-production-100f.up.railway.app',
+    cast=lambda v: [h.strip() for h in v.split(',') if h.strip()],
+)
 CORS_ALLOWED_ORIGINS= ['http://localhost:3000',
                        'https://quickbiteview.vercel.app']
 FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
@@ -62,10 +68,11 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
-    'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
-    # 'django.middleware.csrf.CsrfViewMiddleware',
+    # The API itself is CSRF-exempt in practice (JWT in the Authorization
+    # header, no cookie auth), but the session-backed Django admin needs this.
+    'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -88,7 +95,33 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'EXCEPTION_HANDLER': 'Quickbite.exception_handlers.custom_exception_handler',
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.ScopedRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        # Credential endpoints. A 6-digit OTP with unlimited attempts is
+        # brute-forceable in minutes, so these are deliberately tight.
+        'login': '10/min',
+        'register': '5/min',
+        'password_reset': '5/hour',
+        'otp_verify': '10/hour',
+    },
 }
+
+# Production hardening. Skipped under DEBUG so local http:// still works, and
+# under the test runner - which forces DEBUG=False, so SECURE_SSL_REDIRECT
+# would otherwise turn every test request into a 301.
+TESTING = 'test' in sys.argv
+
+if not DEBUG and not TESTING:
+    SECURE_SSL_REDIRECT = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
 
 CACHES = {
     'default': {
