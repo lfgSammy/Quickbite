@@ -4,7 +4,6 @@ from .models import Order
 from users.models import Notification
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-import datetime
 from django.core.mail import send_mail
 from django.conf import settings
 
@@ -13,16 +12,9 @@ User = get_user_model()
 
 @receiver(post_save, sender=Order)
 def handle_order_notifications(sender, instance, created, **kwargs):
-    # safely format pickup time
     pickup_time = instance.pickup_time
-    if isinstance(pickup_time, str):
-        try:
-            pickup_time = datetime.datetime.fromisoformat(
-                pickup_time.replace('Z', '+00:00'))
-        except ValueError:
-            pickup_time = None
-
-    pickup_str = pickup_time.strftime("%I:%M %p") if pickup_time else 'N/A'
+    pickup_str = (timezone.localtime(pickup_time).strftime("%I:%M %p")
+                  if pickup_time else 'N/A')
 
     if created:
         kitchen_staff = User.objects.filter(role='kitchen')
