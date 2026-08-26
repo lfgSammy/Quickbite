@@ -16,3 +16,6 @@ media/
 .env
 venv/
 env/
+dbsqlite3
+*.sqlite3
+staticfiles/
