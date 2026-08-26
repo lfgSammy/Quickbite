@@ -49,7 +49,7 @@ class VerifyQRView(APIView):
             'order': serializer.data
         })
 
-@extend_schema(tags=['Cart'])
+@extend_schema(tags=['Admin'])
 class AdminDashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
