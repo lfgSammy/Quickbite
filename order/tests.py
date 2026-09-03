@@ -8,7 +8,8 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from menu.models import Drink, MenuItem, MenuItemSize, RiceExtra, ShawarmaOption
+from menu.models import (Drink, MenuItem, MenuItemSize, RiceExtra,
+                        ShawarmaExtra, ShawarmaOption)
 from order.models import (Cart, CartItem, CartItemDrink,
                          CartItemRiceExtra, Order)
 from users.models import OperatingHours, User
@@ -250,3 +251,194 @@ class DrinkPricingTests(APITestCase):
 
         # An extra is per-plate: 3 plates each with plantain = 3 plantains.
         self.assertEqual(line.get_extras_total(), Decimal('900.00'))
+
+
+class CartValidationTests(APITestCase):
+    """
+    Bad input used to be dropped in silence and still return 201. These pin
+    the rules now that they live in the serializer.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='amaka', email='amaka@example.com',
+            password='Passw0rdy', role='customer')
+        self.client.force_authenticate(self.user)
+
+        self.rice = MenuItem.objects.create(name='Party Jollof', item_type='rice')
+        self.size = MenuItemSize.objects.create(
+            menu_item=self.rice, name='Medium', price=Decimal('4000.00'))
+
+        self.other_rice = MenuItem.objects.create(
+            name='Fried Rice', item_type='rice')
+        self.other_size = MenuItemSize.objects.create(
+            menu_item=self.other_rice, name='Big', price=Decimal('5000.00'))
+
+        self.shawarma = MenuItem.objects.create(
+            name='Shawarma', item_type='shawarma')
+        self.beef = ShawarmaOption.objects.create(
+            menu_item=self.shawarma, name='Beef', price=Decimal('4000.00'))
+
+        self.plantain = RiceExtra.objects.create(
+            name='Plantain', price=Decimal('300.00'), max_quantity=3)
+        self.sold_out_extra = RiceExtra.objects.create(
+            name='Coleslaw', price=Decimal('200.00'), is_available=False)
+        self.coke = Drink.objects.create(name='Coke', price=Decimal('500.00'))
+        self.sold_out_drink = Drink.objects.create(
+            name='Fanta', price=Decimal('500.00'), is_available=False)
+
+    def add(self, payload):
+        return self.client.post(reverse('cart-item-add'), payload, format='json')
+
+    def test_a_valid_line_is_accepted(self):
+        response = self.add({
+            'menu_item_id': self.rice.id, 'size_id': self.size.id,
+            'quantity': 2,
+            'rice_extras': [{'extra_id': self.plantain.id, 'quantity': 2}],
+            'drinks': [{'drink_id': self.coke.id, 'quantity': 1}],
+        })
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(CartItem.objects.count(), 1)
+
+    def test_unknown_extra_is_rejected_not_silently_dropped(self):
+        response = self.add({
+            'menu_item_id': self.rice.id, 'size_id': self.size.id,
+            'rice_extras': [{'extra_id': 99999, 'quantity': 1}],
+        })
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(CartItem.objects.count(), 0)
+
+    def test_sold_out_extra_is_rejected(self):
+        response = self.add({
+            'menu_item_id': self.rice.id, 'size_id': self.size.id,
+            'rice_extras': [{'extra_id': self.sold_out_extra.id,
+                             'quantity': 1}],
+        })
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(CartItem.objects.count(), 0)
+
+    def test_sold_out_drink_is_rejected(self):
+        response = self.add({
+            'menu_item_id': self.rice.id, 'size_id': self.size.id,
+            'drinks': [{'drink_id': self.sold_out_drink.id, 'quantity': 1}],
+        })
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_exceeding_max_quantity_errors_instead_of_clamping(self):
+        response = self.add({
+            'menu_item_id': self.rice.id, 'size_id': self.size.id,
+            'rice_extras': [{'extra_id': self.plantain.id, 'quantity': 99}],
+        })
+        # Used to silently become 3 and return 201.
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(CartItem.objects.count(), 0)
+
+    def test_a_size_from_another_menu_item_is_rejected(self):
+        response = self.add({
+            'menu_item_id': self.rice.id, 'size_id': self.other_size.id,
+        })
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_rice_requires_a_size(self):
+        response = self.add({'menu_item_id': self.rice.id})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_shawarma_requires_an_option(self):
+        response = self.add({'menu_item_id': self.shawarma.id})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_shawarma_extras_cannot_go_on_a_rice_item(self):
+        extra = ShawarmaExtra.objects.create(
+            name='Garlic Sauce', price=Decimal('200.00'))
+        response = self.add({
+            'menu_item_id': self.rice.id, 'size_id': self.size.id,
+            'shawarma_extras': [{'extra_id': extra.id, 'is_added': True}],
+        })
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_unavailable_menu_item_is_rejected(self):
+        self.rice.is_available = False
+        self.rice.save()
+        response = self.add({
+            'menu_item_id': self.rice.id, 'size_id': self.size.id})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_zero_quantity_is_rejected(self):
+        response = self.add({
+            'menu_item_id': self.rice.id, 'size_id': self.size.id,
+            'quantity': 0})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_nothing_is_written_when_one_child_row_is_invalid(self):
+        response = self.add({
+            'menu_item_id': self.rice.id, 'size_id': self.size.id,
+            'rice_extras': [
+                {'extra_id': self.plantain.id, 'quantity': 1},
+                {'extra_id': self.sold_out_extra.id, 'quantity': 1},
+            ],
+        })
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # The good row must not survive on its own.
+        self.assertEqual(CartItem.objects.count(), 0)
+        self.assertEqual(CartItemRiceExtra.objects.count(), 0)
+
+
+class CartUpdateValidationTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='ola', email='ola@example.com',
+            password='Passw0rdy', role='customer')
+        self.client.force_authenticate(self.user)
+
+        self.rice = MenuItem.objects.create(name='Party Jollof', item_type='rice')
+        self.size = MenuItemSize.objects.create(
+            menu_item=self.rice, name='Medium', price=Decimal('4000.00'))
+        self.plantain = RiceExtra.objects.create(
+            name='Plantain', price=Decimal('300.00'), max_quantity=3)
+
+        cart = Cart.objects.create(customer=self.user)
+        self.line = CartItem.objects.create(
+            cart=cart, menu_item=self.rice, size=self.size, quantity=1)
+
+    def patch(self, payload):
+        return self.client.patch(
+            reverse('update-cart-item', args=[self.line.id]),
+            payload, format='json')
+
+    def test_quantity_can_be_updated(self):
+        response = self.patch({'quantity': 4})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.line.refresh_from_db()
+        self.assertEqual(self.line.quantity, 4)
+
+    def test_quantity_below_one_is_rejected(self):
+        response = self.patch({'quantity': 0})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.line.refresh_from_db()
+        self.assertEqual(self.line.quantity, 1)
+
+    def test_extras_are_replaced_wholesale(self):
+        self.patch({'rice_extras': [
+            {'extra_id': self.plantain.id, 'quantity': 2}]})
+        self.assertEqual(self.line.rice_extras.count(), 1)
+
+        self.patch({'rice_extras': []})
+        self.assertEqual(self.line.rice_extras.count(), 0)
+
+    def test_update_enforces_max_quantity_too(self):
+        response = self.patch({'rice_extras': [
+            {'extra_id': self.plantain.id, 'quantity': 99}]})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(self.line.rice_extras.count(), 0)
+
+    def test_another_users_line_cannot_be_updated(self):
+        stranger = User.objects.create_user(
+            username='intruder', email='intruder@example.com',
+            password='Passw0rdy', role='customer')
+        self.client.force_authenticate(stranger)
+
+        response = self.patch({'quantity': 99})
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.line.refresh_from_db()
+        self.assertEqual(self.line.quantity, 1)
