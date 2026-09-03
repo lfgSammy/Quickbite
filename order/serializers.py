@@ -56,21 +56,12 @@ class CartItemShawarmaExtraSerializer(serializers.ModelSerializer):
 
 
 class CartItemSerializer(serializers.ModelSerializer):
+    """Read-only view of a cart line. Writes go through the serializers below."""
+
     menu_item = CartMenuItemSerializer(read_only=True)
-    menu_item_id = serializers.PrimaryKeyRelatedField(
-        queryset=MenuItem.objects.all(), source='menu_item', write_only=True)
     size = MenuItemSizeSerializer(read_only=True)
-    size_id = serializers.PrimaryKeyRelatedField(
-        queryset=MenuItemSize.objects.all(), source='size',
-        write_only=True, required=False, allow_null=True)
     rice_type = RiceTypeSerializer(read_only=True)
-    rice_type_id = serializers.PrimaryKeyRelatedField(
-        queryset=RiceType.objects.all(), source='rice_type',
-        write_only=True, required=False, allow_null=True)
     shawarma_option = ShawarmaOptionSerializer(read_only=True)
-    shawarma_option_id = serializers.PrimaryKeyRelatedField(
-        queryset=ShawarmaOption.objects.all(), source='shawarma_option',
-        write_only=True, required=False, allow_null=True)
     rice_extras = CartItemRiceExtraSerializer(many=True, read_only=True)
     shawarma_extras = CartItemShawarmaExtraSerializer(many=True, read_only=True)
     drinks = CartItemDrinkSerializer(many=True, read_only=True)
@@ -96,12 +87,8 @@ class CartItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = CartItem
         fields = [
-            'id', 'menu_item', 'menu_item_id',
-            'size', 'size_id',
-            'rice_type', 'rice_type_id',
-            'shawarma_option', 'shawarma_option_id',
-            'quantity',
-            'rice_extras', 'shawarma_extras', 'drinks',
+            'id', 'menu_item', 'size', 'rice_type', 'shawarma_option',
+            'quantity', 'rice_extras', 'shawarma_extras', 'drinks',
             'total', 'created_at',
         ]
         read_only_fields = ['created_at']
@@ -184,3 +171,202 @@ class OrderSerializer(serializers.ModelSerializer):
             'customer', 'total_amount', 'qr_code',
             'created_at', 'updated_at',
         ]
+
+
+# --------------------------------------------------------------------------
+# Write serializers
+#
+# The cart views used to re-read request.data by hand and validate inline,
+# which meant the rules were duplicated between "add to cart" and "update
+# cart item", and anything unrecognised (a bad extra_id, a sold-out drink)
+# was silently skipped while still returning 201. These carry the rules once
+# and reject bad input instead of dropping it.
+# --------------------------------------------------------------------------
+
+
+class RiceExtraInputSerializer(serializers.Serializer):
+    extra_id = serializers.PrimaryKeyRelatedField(
+        queryset=RiceExtra.objects.all(), source='extra')
+    quantity = serializers.IntegerField(min_value=1, default=1)
+
+    def validate(self, attrs):
+        extra, quantity = attrs['extra'], attrs['quantity']
+        if not extra.is_available:
+            raise serializers.ValidationError(
+                f'{extra.name} is not available right now.')
+        # Previously clamped to max_quantity in silence, so the customer was
+        # charged for fewer than they asked for without being told.
+        if quantity > extra.max_quantity:
+            raise serializers.ValidationError(
+                f'You can add at most {extra.max_quantity} x {extra.name}.')
+        return attrs
+
+
+class ShawarmaExtraInputSerializer(serializers.Serializer):
+    extra_id = serializers.PrimaryKeyRelatedField(
+        queryset=ShawarmaExtra.objects.all(), source='extra')
+    is_added = serializers.BooleanField(default=True)
+
+    def validate(self, attrs):
+        extra = attrs['extra']
+        if attrs['is_added'] and not extra.is_available:
+            raise serializers.ValidationError(
+                f'{extra.name} is not available right now.')
+        return attrs
+
+
+class DrinkInputSerializer(serializers.Serializer):
+    drink_id = serializers.PrimaryKeyRelatedField(
+        queryset=Drink.objects.all(), source='drink')
+    quantity = serializers.IntegerField(min_value=1, default=1)
+
+    def validate(self, attrs):
+        drink = attrs['drink']
+        if not drink.is_available:
+            raise serializers.ValidationError(
+                f'{drink.name} is not available right now.')
+        return attrs
+
+
+class CartLineWriteMixin:
+    """Shared rules and child-row writing for the create and update paths."""
+
+    def check_choices_match_item(self, menu_item, attrs, require_choice):
+        """
+        Enforce the rules implied by the item's type.
+
+        `require_choice` is True on create (you must pick a size or an option)
+        and False on update, where the existing line already has one.
+        """
+        item_type = menu_item.item_type
+
+        if item_type not in ('rice', 'shawarma'):
+            raise serializers.ValidationError(
+                {'menu_item_id':
+                 'This item is not configured for ordering yet.'})
+
+        if item_type == 'rice':
+            size = attrs.get('size')
+            if require_choice and not size:
+                raise serializers.ValidationError(
+                    {'size_id': 'Size is required for rice items.'})
+            if size and size.menu_item_id != menu_item.id:
+                raise serializers.ValidationError(
+                    {'size_id': 'That size belongs to a different menu item.'})
+            if attrs.get('shawarma_option'):
+                raise serializers.ValidationError(
+                    {'shawarma_option_id':
+                     'A rice item cannot take a shawarma option.'})
+            if attrs.get('shawarma_extras'):
+                raise serializers.ValidationError(
+                    {'shawarma_extras':
+                     'Shawarma extras cannot be added to a rice item.'})
+        else:
+            option = attrs.get('shawarma_option')
+            if require_choice and not option:
+                raise serializers.ValidationError(
+                    {'shawarma_option_id': 'Shawarma option is required.'})
+            if option:
+                if option.menu_item_id != menu_item.id:
+                    raise serializers.ValidationError(
+                        {'shawarma_option_id':
+                         'That option belongs to a different menu item.'})
+                if not option.is_available:
+                    raise serializers.ValidationError(
+                        {'shawarma_option_id':
+                         f'{option.name} is not available right now.'})
+            if attrs.get('size'):
+                raise serializers.ValidationError(
+                    {'size_id': 'A shawarma item does not take a size.'})
+            if attrs.get('rice_extras'):
+                raise serializers.ValidationError(
+                    {'rice_extras':
+                     'Rice extras cannot be added to a shawarma item.'})
+
+    def write_children(self, cart_item, validated_data, replace):
+        """Create the extra/drink rows. On update, replace them wholesale."""
+        specs = (
+            ('rice_extras', CartItemRiceExtra,
+             lambda row: {'extra': row['extra'],
+                          'quantity': row['quantity']}),
+            ('shawarma_extras', CartItemShawarmaExtra,
+             lambda row: {'extra': row['extra'],
+                          'is_added': row['is_added']}),
+            ('drinks', CartItemDrink,
+             lambda row: {'drink': row['drink'],
+                          'quantity': row['quantity']}),
+        )
+        for field, model, build_kwargs in specs:
+            rows = validated_data.get(field)
+            if rows is None:
+                continue
+            if replace:
+                getattr(cart_item, field).all().delete()
+            for row in rows:
+                model.objects.create(cart_item=cart_item, **build_kwargs(row))
+
+
+class CartItemCreateSerializer(CartLineWriteMixin, serializers.Serializer):
+    menu_item_id = serializers.PrimaryKeyRelatedField(
+        queryset=MenuItem.objects.all(), source='menu_item')
+    quantity = serializers.IntegerField(min_value=1, default=1)
+    size_id = serializers.PrimaryKeyRelatedField(
+        queryset=MenuItemSize.objects.all(), source='size',
+        required=False, allow_null=True)
+    rice_type_id = serializers.PrimaryKeyRelatedField(
+        queryset=RiceType.objects.all(), source='rice_type',
+        required=False, allow_null=True)
+    shawarma_option_id = serializers.PrimaryKeyRelatedField(
+        queryset=ShawarmaOption.objects.all(), source='shawarma_option',
+        required=False, allow_null=True)
+    rice_extras = RiceExtraInputSerializer(many=True, required=False)
+    shawarma_extras = ShawarmaExtraInputSerializer(many=True, required=False)
+    drinks = DrinkInputSerializer(many=True, required=False)
+
+    def validate_menu_item_id(self, menu_item):
+        if not menu_item.is_available:
+            raise serializers.ValidationError(
+                f'{menu_item.name} is not available right now.')
+        return menu_item
+
+    def validate(self, attrs):
+        self.check_choices_match_item(attrs['menu_item'], attrs, True)
+        return attrs
+
+    def create(self, validated_data):
+        cart_item = CartItem.objects.create(
+            cart=validated_data['cart'],
+            menu_item=validated_data['menu_item'],
+            size=validated_data.get('size'),
+            rice_type=validated_data.get('rice_type'),
+            shawarma_option=validated_data.get('shawarma_option'),
+            quantity=validated_data['quantity'],
+        )
+        self.write_children(cart_item, validated_data, replace=False)
+        return cart_item
+
+
+class CartItemUpdateSerializer(CartLineWriteMixin, serializers.Serializer):
+    """
+    Partial update of an existing line.
+
+    The menu item and its size/option are fixed once the line exists - change
+    those by removing the line and adding it again.
+    """
+
+    quantity = serializers.IntegerField(min_value=1, required=False)
+    rice_extras = RiceExtraInputSerializer(many=True, required=False)
+    shawarma_extras = ShawarmaExtraInputSerializer(many=True, required=False)
+    drinks = DrinkInputSerializer(many=True, required=False)
+
+    def validate(self, attrs):
+        self.check_choices_match_item(
+            self.instance.menu_item, attrs, False)
+        return attrs
+
+    def update(self, instance, validated_data):
+        if 'quantity' in validated_data:
+            instance.quantity = validated_data['quantity']
+            instance.save(update_fields=['quantity'])
+        self.write_children(instance, validated_data, replace=True)
+        return instance
