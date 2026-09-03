@@ -9,13 +9,14 @@ from order.models import (Order, OrderItem, OrderItemDrink, OrderItemRiceExtra,
 from menu.models import MenuItem, MenuItemSize, RiceType, RiceExtra,ShawarmaExtra,Drink,ShawarmaOption
 from order.serializers import OrderSerializer
 from drf_spectacular.utils import extend_schema
+from Quickbite.pagination import PaginatedListMixin
 from users.models import OperatingHours
 from django.utils import timezone
 from datetime import datetime
 from decimal import Decimal
 
 @extend_schema(tags=['Orders'])
-class OrderListView(APIView):
+class OrderListView(PaginatedListMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -32,8 +33,7 @@ class OrderListView(APIView):
                 'items__drinks'
             ).filter(customer=request.user).order_by('-created_at')
 
-        serializer = OrderSerializer(orders, many=True)
-        return Response(serializer.data)
+        return self.paginated_response(orders, OrderSerializer, request)
 
     @extend_schema(request=OrderSerializer)
     def post(self, request):
