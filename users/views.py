@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from drf_spectacular.utils import extend_schema
+from Quickbite.pagination import PaginatedListMixin
 from .models import User, Notification, OperatingHours
 from .serializers import UserSerializer, NotificationSerializer, LoginSerializer, RegisterSerializer
 from django.utils import timezone
@@ -298,7 +299,7 @@ class ResetPasswordView(APIView):
 
         return Response({'message': 'Password reset successfully. You can now login.'})
 
-class UserListView(APIView):
+class UserListView(PaginatedListMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -316,8 +317,7 @@ class UserListView(APIView):
         if role:
             users = users.filter(role=role)
 
-        serializer = UserSerializer(users, many=True)
-        return Response(serializer.data)
+        return self.paginated_response(users, UserSerializer, request)
 
 
 class AssignRoleView(APIView):
@@ -414,14 +414,15 @@ class RestaurantStatusView(APIView):
         })
 
 
-class NotificationListView(APIView):
+class NotificationListView(PaginatedListMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         # --- FIX 3: Close filter parentheses correctly ---
-        notification = Notification.objects.filter(user=request.user).order_by('-created_at')
-        serializer = NotificationSerializer(notification, many=True)
-        return Response(serializer.data)
+        notifications = Notification.objects.filter(
+            user=request.user).order_by('-created_at')
+        return self.paginated_response(
+            notifications, NotificationSerializer, request)
     
     def patch(self, request):
         Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
