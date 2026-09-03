@@ -1,14 +1,15 @@
 from django.db import transaction
 from rest_framework import status
-from rest_framework import serializers as drf_serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from order.models import (Order,Cart, CartItem, CartItemDrink, CartItemRiceExtra,
                           CartItemShawarmaExtra)
-from menu.models import MenuItem, MenuItemSize, RiceType, RiceExtra,ShawarmaExtra,Drink,ShawarmaOption
-from order.serializers import CartItemSerializer, CartSerializer
-from drf_spectacular.utils import extend_schema, inline_serializer
+from menu.models import (MenuItemSize, RiceType, RiceExtra, ShawarmaExtra,
+                         Drink, ShawarmaOption)
+from order.serializers import (CartItemCreateSerializer,
+                               CartItemUpdateSerializer, CartSerializer)
+from drf_spectacular.utils import extend_schema
 
 # Every relation the cart serializer and get_total() touch. Without these the
 # cart was ~8 queries per line: get_total() walks extras and drinks, then the
@@ -47,217 +48,51 @@ class CartView(APIView):
 class CartItemView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(request=CartItemSerializer)
+    @extend_schema(request=CartItemCreateSerializer,
+                   responses={201: CartSerializer})
     def post(self, request):
-        cart, created = Cart.objects.get_or_create(customer=request.user)
+        cart, _ = Cart.objects.get_or_create(customer=request.user)
 
-        menu_item_id = request.data.get('menu_item_id')
-        quantity = int(request.data.get('quantity', 1))
-        size_id = request.data.get('size_id')
-        rice_type_id = request.data.get('rice_type_id')
-        shawarma_option_id = request.data.get('shawarma_option_id')
-        rice_extras = request.data.get('rice_extras', [])
-        shawarma_extras = request.data.get('shawarma_extras', [])
-        drinks = request.data.get('drinks', [])
-
-        # validate menu item
-        menu_item = MenuItem.objects.filter(
-            id=menu_item_id, is_available=True).first()
-        if not menu_item:
-            return Response({'error': 'Menu item unavailable'},
-                            status=status.HTTP_404_NOT_FOUND)
-
-        # validate based on item type
-        if menu_item.item_type == 'rice':
-            if not size_id:
-                return Response({'error': 'Size is required for rice items'},
-                                status=status.HTTP_400_BAD_REQUEST)
-            size = MenuItemSize.objects.filter(
-                id=size_id, menu_item=menu_item).first()
-            if not size:
-                return Response({'error': 'Invalid size for this menu item'},
-                                status=status.HTTP_400_BAD_REQUEST)
-            rice_type = None
-            if rice_type_id:
-                rice_type = RiceType.objects.filter(id=rice_type_id).first()
-            shawarma_option = None
-
-        elif menu_item.item_type == 'shawarma':
-            if not shawarma_option_id:
-                return Response(
-                    {'error': 'Shawarma option is required'},
-                    status=status.HTTP_400_BAD_REQUEST)
-            shawarma_option = ShawarmaOption.objects.filter(
-                id=shawarma_option_id,
-                menu_item=menu_item,
-                is_available=True
-            ).first()
-            if not shawarma_option:
-                return Response({'error': 'Invalid shawarma option'},
-                                status=status.HTTP_400_BAD_REQUEST)
-            size = None
-            rice_type = None
-
-        else:
-            # item_type is nullable on MenuItem, so an item with no type set
-            # used to fall through both branches and raise UnboundLocalError
-            # on the create() below - a 500 where a 400 belongs.
-            return Response(
-                {'error': 'This menu item is not configured for ordering yet'},
-                status=status.HTTP_400_BAD_REQUEST)
-
+        serializer = CartItemCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         with transaction.atomic():
-            # create cart item
-            cart_item = CartItem.objects.create(
-                cart=cart,
-                menu_item=menu_item,
-                size=size if menu_item.item_type == 'rice' else None,
-                rice_type=rice_type,
-                shawarma_option=shawarma_option,
-                quantity=quantity
-            )
+            serializer.save(cart=cart)
 
-            # add rice extras
-            if menu_item.item_type == 'rice' and rice_extras:
-                for extra_data in rice_extras:
-                    extra = RiceExtra.objects.filter(
-                        id=extra_data.get('extra_id'),
-                        is_available=True
-                    ).first()
-                    if extra:
-                        qty = int(extra_data.get('quantity', 1))
-                        # enforce max quantity
-                        if qty > extra.max_quantity:
-                            qty = extra.max_quantity
-                        CartItemRiceExtra.objects.create(
-                            cart_item=cart_item,
-                            extra=extra,
-                            quantity=qty
-                        )
+        return Response(CartSerializer(load_cart(request.user)).data,
+                        status=status.HTTP_201_CREATED)
 
-            # add shawarma extras (toggles)
-            if menu_item.item_type == 'shawarma' and shawarma_extras:
-                for extra_data in shawarma_extras:
-                    extra = ShawarmaExtra.objects.filter(
-                        id=extra_data.get('extra_id'),
-                        is_available=True
-                    ).first()
-                    if extra:
-                        CartItemShawarmaExtra.objects.create(
-                            cart_item=cart_item,
-                            extra=extra,
-                            is_added=extra_data.get('is_added', True)
-                        )
-
-            # add drinks
-            if drinks:
-                for drink_data in drinks:
-                    drink = Drink.objects.filter(
-                        id=drink_data.get('drink_id'),
-                        is_available=True
-                    ).first()
-                    if drink:
-                        CartItemDrink.objects.create(
-                            cart_item=cart_item,
-                            drink=drink,
-                            quantity=int(drink_data.get('quantity', 1))
-                        )
-
-        serializer = CartSerializer(load_cart(request.user))
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-
-    @extend_schema(responses={204:None})
+    @extend_schema(responses={204: None})
     def delete(self, request, item_id):
-        cart = Cart.objects.filter(customer=request.user).first()
-        if not cart:
-            return Response({'error': 'Cart not found'},
-                            status=status.HTTP_404_NOT_FOUND)
-        cart_item = CartItem.objects.filter(id=item_id, cart=cart).first()
+        cart_item = CartItem.objects.filter(
+            id=item_id, cart__customer=request.user).first()
         if not cart_item:
             return Response({'error': 'Item not found in cart'},
                             status=status.HTTP_404_NOT_FOUND)
         cart_item.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+
 class UpdateCartItemView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(request=CartItemUpdateSerializer,
+                   responses={200: CartSerializer})
     def patch(self, request, item_id):
-        cart = Cart.objects.filter(customer=request.user).first()
-        if not cart:
-            return Response({'error': 'Cart not found'},
-                            status=status.HTTP_404_NOT_FOUND)
-
-        cart_item = CartItem.objects.filter(
-            id=item_id, cart=cart).first()
+        cart_item = CartItem.objects.select_related('menu_item').filter(
+            id=item_id, cart__customer=request.user).first()
         if not cart_item:
             return Response({'error': 'Item not found in cart'},
                             status=status.HTTP_404_NOT_FOUND)
 
-        quantity = request.data.get('quantity')
-        if quantity is not None:
-            quantity = int(quantity)
-            if quantity < 1:
-                return Response({'error': 'Quantity must be at least 1'},
-                                status=status.HTTP_400_BAD_REQUEST)
-            cart_item.quantity = quantity
-            cart_item.save()
+        serializer = CartItemUpdateSerializer(
+            cart_item, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            serializer.save()
 
-        # update drinks
-        drinks = request.data.get('drinks')
-        if drinks is not None:
-            cart_item.drinks.all().delete()
-            for drink_data in drinks:
-                drink = Drink.objects.filter(
-                    id=drink_data.get('drink_id'),
-                    is_available=True
-                ).first()
-                if drink:
-                    CartItemDrink.objects.create(
-                        cart_item=cart_item,
-                        drink=drink,
-                        quantity=int(drink_data.get('quantity', 1))
-                    )
+        return Response(CartSerializer(load_cart(request.user)).data)
 
-        # update rice extras
-        rice_extras = request.data.get('rice_extras')
-        if rice_extras is not None:
-            cart_item.rice_extras.all().delete()
-            for extra_data in rice_extras:
-                extra = RiceExtra.objects.filter(
-                    id=extra_data.get('extra_id'),
-                    is_available=True
-                ).first()
-                if extra:
-                    qty = int(extra_data.get('quantity', 1))
-                    if qty > extra.max_quantity:
-                        qty = extra.max_quantity
-                    CartItemRiceExtra.objects.create(
-                        cart_item=cart_item,
-                        extra=extra,
-                        quantity=qty
-                    )
 
-        # update shawarma extras
-        shawarma_extras = request.data.get('shawarma_extras')
-        if shawarma_extras is not None:
-            cart_item.shawarma_extras.all().delete()
-            for extra_data in shawarma_extras:
-                extra = ShawarmaExtra.objects.filter(
-                    id=extra_data.get('extra_id'),
-                    is_available=True
-                ).first()
-                if extra:
-                    CartItemShawarmaExtra.objects.create(
-                        cart_item=cart_item,
-                        extra=extra,
-                        is_added=extra_data.get('is_added', True)
-                    )
-
-        serializer = CartSerializer(load_cart(request.user))
-        return Response(serializer.data)
-    
 class RevertOrderToCartView(APIView):
     permission_classes = [IsAuthenticated]
 
