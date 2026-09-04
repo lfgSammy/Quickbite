@@ -534,3 +534,40 @@ class OrderStatusSerializer(serializers.Serializer):
         instance.status = validated_data['status']
         instance.save(update_fields=['status', 'updated_at'])
         return instance
+
+
+class RevertOrderResponseSerializer(serializers.Serializer):
+    """Reverting an order cancels it and hands the cart back."""
+
+    message = serializers.CharField()
+    cart = CartSerializer()
+
+
+class VerifyQRResponseSerializer(serializers.Serializer):
+    """A successful scan marks the order collected and echoes it back."""
+
+    message = serializers.CharField()
+    order = OrderSerializer()
+
+
+class DashboardOverviewSerializer(serializers.Serializer):
+    total_orders = serializers.IntegerField()
+    today_orders = serializers.IntegerField()
+    total_revenue = money()
+    today_revenue = money()
+    weekly_revenue = money()
+
+
+class DashboardStatusCountSerializer(serializers.Serializer):
+    status = serializers.CharField()
+    count = serializers.IntegerField()
+
+
+class AdminDashboardSerializer(serializers.Serializer):
+    overview = DashboardOverviewSerializer()
+    status_breakdown = DashboardStatusCountSerializer(many=True)
+    pending_orders = OrderSerializer(many=True)
+
+
+class VerifyQRRequestSerializer(serializers.Serializer):
+    qr_code = serializers.CharField()
