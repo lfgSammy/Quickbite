@@ -1,3 +1,6 @@
+from decimal import Decimal
+
+from django.utils import timezone
 from rest_framework import serializers
 
 from .models import (Cart, CartItem, CartItemRiceExtra,
@@ -250,9 +253,15 @@ class CartLineWriteMixin:
             if require_choice and not size:
                 raise serializers.ValidationError(
                     {'size_id': 'Size is required for rice items.'})
-            if size and size.menu_item_id != menu_item.id:
-                raise serializers.ValidationError(
-                    {'size_id': 'That size belongs to a different menu item.'})
+            if size:
+                if size.menu_item_id != menu_item.id:
+                    raise serializers.ValidationError(
+                        {'size_id':
+                         'That size belongs to a different menu item.'})
+                if not size.is_available:
+                    raise serializers.ValidationError(
+                        {'size_id':
+                         f'{size.name} is not available right now.'})
             if attrs.get('shawarma_option'):
                 raise serializers.ValidationError(
                     {'shawarma_option_id':
@@ -369,4 +378,159 @@ class CartItemUpdateSerializer(CartLineWriteMixin, serializers.Serializer):
             instance.quantity = validated_data['quantity']
             instance.save(update_fields=['quantity'])
         self.write_children(instance, validated_data, replace=True)
+        return instance
+
+
+class OrderCreateSerializer(serializers.Serializer):
+    """
+    Everything that has to be true before an order can be placed.
+
+    This was ~45 lines of request.data.get() and inline checks in the view.
+    Gathering it here means the rules are in one place and the API docs can
+    finally describe what this endpoint accepts.
+    """
+
+    pickup_time = serializers.DateTimeField()
+    special_instructions = serializers.CharField(
+        required=False, allow_blank=True, max_length=500)
+
+    def validate_pickup_time(self, pickup_time):
+        from users.models import OperatingHours
+
+        if timezone.is_naive(pickup_time):
+            pickup_time = timezone.make_aware(pickup_time)
+
+        if pickup_time <= timezone.now():
+            raise serializers.ValidationError(
+                'Pickup time must be in the future.')
+
+        # Checked against the hours for the *pickup* day, not today's - a
+        # Saturday order for Sunday pickup was being judged on Saturday's.
+        local = timezone.localtime(pickup_time)
+        hours = OperatingHours.objects.filter(day=local.weekday()).first()
+
+        if not hours or not hours.is_open:
+            raise serializers.ValidationError(
+                f'We are closed on {local.strftime("%A")}.')
+
+        if not (hours.open_time <= local.time() <= hours.close_time):
+            raise serializers.ValidationError(
+                f'Pickup must be between '
+                f'{hours.open_time.strftime("%I:%M %p")} and '
+                f'{hours.close_time.strftime("%I:%M %p")} on '
+                f'{local.strftime("%A")}.')
+
+        return pickup_time
+
+    def validate(self, attrs):
+        cart = self.context['cart']
+
+        lines = list(cart.items.select_related(
+            'menu_item', 'size', 'rice_type', 'shawarma_option'
+        ).prefetch_related(
+            'rice_extras__extra', 'shawarma_extras__extra', 'drinks__drink',
+        ))
+
+        if not lines:
+            raise serializers.ValidationError('Your cart is empty.')
+
+        # A line can go stale between adding it and checking out: the dish
+        # pulled from the menu, or its size deleted, which would otherwise
+        # price the line at zero and freeze that into a real order.
+        for line in lines:
+            if not line.menu_item.is_available:
+                raise serializers.ValidationError(
+                    f'{line.menu_item.name} is no longer available. '
+                    f'Please update your cart.')
+            if line.get_base_price() <= 0:
+                raise serializers.ValidationError(
+                    f'The option you chose for {line.menu_item.name} is no '
+                    f'longer available. Please update your cart.')
+
+        attrs['lines'] = lines
+        return attrs
+
+    def create(self, validated_data):
+        cart = self.context['cart']
+        lines = validated_data['lines']
+
+        order = Order.objects.create(
+            customer=cart.customer,
+            pickup_time=validated_data['pickup_time'],
+            special_instructions=validated_data.get(
+                'special_instructions', ''),
+            total_amount=sum(
+                (line.get_total() for line in lines), Decimal('0.00')),
+            status='pending',
+        )
+
+        for line in lines:
+            order_item = OrderItem.objects.create(
+                order=order,
+                menu_item=line.menu_item,
+                menu_item_name=line.menu_item.name,
+                size_name=line.size.name if line.size else '',
+                size_price=line.size.price if line.size else 0,
+                rice_type_name=(
+                    line.rice_type.name if line.rice_type else ''),
+                shawarma_option_name=(
+                    line.shawarma_option.name if line.shawarma_option else ''),
+                shawarma_option_price=(
+                    line.shawarma_option.price if line.shawarma_option else 0),
+                quantity=line.quantity,
+                item_total=line.get_total(),
+            )
+
+            # Prices are copied, not referenced: an order is a record of what
+            # was charged, so later menu edits must not rewrite history.
+            for rice_extra in line.rice_extras.all():
+                OrderItemRiceExtra.objects.create(
+                    order_item=order_item,
+                    extra_name=rice_extra.extra.name,
+                    extra_price=rice_extra.extra.price,
+                    quantity=rice_extra.quantity,
+                )
+            for shawarma_extra in line.shawarma_extras.all():
+                OrderItemShawarmaExtra.objects.create(
+                    order_item=order_item,
+                    extra_name=shawarma_extra.extra.name,
+                    extra_price=shawarma_extra.extra.price,
+                    is_added=shawarma_extra.is_added,
+                )
+            for drink in line.drinks.all():
+                OrderItemDrink.objects.create(
+                    order_item=order_item,
+                    drink_name=drink.drink.name,
+                    drink_price=drink.drink.price,
+                    quantity=drink.quantity,
+                )
+
+        cart.items.all().delete()
+        return order
+
+
+class OrderStatusSerializer(serializers.Serializer):
+    """
+    Kitchen-driven status changes.
+
+    `collected` is deliberately absent: an order only reaches it by having its
+    QR code scanned, so it cannot be set by hand here.
+    """
+
+    SETTABLE = ['preparing', 'ready', 'cancelled']
+    # A status change is only meaningful once the order has been paid for.
+    CHANGEABLE_FROM = ['paid', 'preparing']
+
+    status = serializers.ChoiceField(choices=SETTABLE)
+
+    def validate(self, attrs):
+        current = self.instance.status
+        if current not in self.CHANGEABLE_FROM:
+            raise serializers.ValidationError(
+                f'An order that is {current} can no longer be updated.')
+        return attrs
+
+    def update(self, instance, validated_data):
+        instance.status = validated_data['status']
+        instance.save(update_fields=['status', 'updated_at'])
         return instance
