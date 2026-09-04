@@ -112,7 +112,9 @@ class OrderCheckoutTests(APITestCase):
             reverse('order-list'),
             {'pickup_time': pickup.isoformat()}, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('closed', response.data['error'].lower())
+        # Validation moved into OrderCreateSerializer, so errors now come back
+        # keyed by field the way DRF reports them rather than under 'error'.
+        self.assertIn('closed', str(response.data).lower())
 
 
 class ResponseShapeTests(APITestCase):
