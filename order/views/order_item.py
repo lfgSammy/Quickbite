@@ -1,23 +1,23 @@
 from django.db import transaction
 from rest_framework import status
-from rest_framework import serializers as drf_serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from order.models import (Order, OrderItem, OrderItemDrink, OrderItemRiceExtra,
-                          OrderItemShawarmaExtra, Cart)
-from menu.models import MenuItem, MenuItemSize, RiceType, RiceExtra,ShawarmaExtra,Drink,ShawarmaOption
-from order.serializers import OrderSerializer
-from drf_spectacular.utils import extend_schema
+
 from Quickbite.pagination import PaginatedListMixin
-from users.models import OperatingHours
-from django.utils import timezone
-from datetime import datetime
-from decimal import Decimal
+from Quickbite.permissions import IsCustomer, IsKitchenOrAdmin
+from order.models import Cart, Order
+from order.serializers import (OrderCreateSerializer, OrderSerializer,
+                               OrderStatusSerializer)
+from drf_spectacular.utils import extend_schema
 
 @extend_schema(tags=['Orders'])
 class OrderListView(PaginatedListMixin, APIView):
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        # Anyone signed in may list their own orders; only customers place them.
+        if self.request.method == 'POST':
+            return [IsCustomer()]
+        return [IsAuthenticated()]
 
     def get(self, request):
         if request.user.is_admin or request.user.is_kitchen:
@@ -35,168 +35,33 @@ class OrderListView(PaginatedListMixin, APIView):
 
         return self.paginated_response(orders, OrderSerializer, request)
 
-    @extend_schema(request=OrderSerializer)
+    @extend_schema(request=OrderCreateSerializer,
+                   responses={201: OrderSerializer})
     def post(self, request):
-        if not request.user.is_customer:
-            return Response({'error': 'Only customers can place orders'},
-                            status=status.HTTP_403_FORBIDDEN)
-
         cart = Cart.objects.filter(customer=request.user).first()
-        if not cart or not cart.items.exists():
+        if not cart:
             return Response({'error': 'Your cart is empty'},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        pickup_time = request.data.get('pickup_time')
-        if not pickup_time:
-            return Response({'error': 'Pickup time is required'},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        now = timezone.localtime()
-        current_day = now.weekday()
-        current_time = now.time()
-
-        hours = OperatingHours.objects.filter(day=current_day).first()
-
-        if not hours or not hours.is_open:
-            return Response({'error':'Restaurant is currently closed'},
-                            status=status.HTTP_400_BAD_REQUEST)
-        
-        if not (hours.open_time <= current_time <= hours.close_time):
-            return Response({'error':f'Restaurant is closed. '
-                                     f'Open hours: {hours.open_time.strftime("%I:%M %p")} - '
-                                     f'{hours.close_time.strftime("%I:%M %p")}'},
-                                     status=status.HTTP_400_BAD_REQUEST)
-        try:
-            pickup_dt = datetime.fromisoformat(pickup_time.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            return Response({'error': 'Invalid pickup time format'},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        # A naive datetime would compare incorrectly against timezone.now().
-        if timezone.is_naive(pickup_dt):
-            pickup_dt = timezone.make_aware(pickup_dt)
-
-        pickup_local = timezone.localtime(pickup_dt)
-
-        # Validate against the hours for the *pickup* day, not today's - a
-        # Saturday order for Sunday pickup was being checked against Saturday.
-        pickup_hours = OperatingHours.objects.filter(
-            day=pickup_local.weekday()).first()
-        if not pickup_hours or not pickup_hours.is_open:
-            return Response(
-                {'error': f'Restaurant is closed on '
-                          f'{pickup_local.strftime("%A")}'},
-                status=status.HTTP_400_BAD_REQUEST)
-
-        if not (pickup_hours.open_time <= pickup_local.time()
-                <= pickup_hours.close_time):
-            return Response(
-                {'error': f'Pickup time must be between '
-                          f'{pickup_hours.open_time.strftime("%I:%M %p")} and '
-                          f'{pickup_hours.close_time.strftime("%I:%M %p")} on '
-                          f'{pickup_local.strftime("%A")}'},
-                status=status.HTTP_400_BAD_REQUEST)
-
-        if pickup_dt <= timezone.now():
-            return Response({'error': 'Pickup time must be in the future'},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-
-        cart_items = list(cart.items.select_related(
-            'menu_item', 'size', 'rice_type', 'shawarma_option'
-        ).prefetch_related(
-            'rice_extras__extra',
-            'shawarma_extras__extra',
-            'drinks__drink',
-        ))
-
-        # Re-check the cart at order time. A line can go stale between adding
-        # it and checking out - the item pulled from the menu, or its size /
-        # option deleted, which would otherwise price the line at 0.
-        for cart_item in cart_items:
-            if not cart_item.menu_item.is_available:
-                return Response(
-                    {'error': f'{cart_item.menu_item.name} is no longer '
-                              f'available. Please update your cart.'},
-                    status=status.HTTP_400_BAD_REQUEST)
-            if cart_item.get_base_price() <= 0:
-                return Response(
-                    {'error': f'The option you chose for '
-                              f'{cart_item.menu_item.name} is no longer '
-                              f'available. Please update your cart.'},
-                    status=status.HTTP_400_BAD_REQUEST)
-
-        total_amount = sum(
-            (item.get_total() for item in cart_items), Decimal('0.00'))
+        serializer = OrderCreateSerializer(
+            data=request.data, context={'cart': cart})
+        serializer.is_valid(raise_exception=True)
 
         with transaction.atomic():
-            order = Order.objects.create(
-                customer=request.user,
-                pickup_time=pickup_dt,
-                total_amount=total_amount,
-                status='pending'
-            )
+            order = serializer.save()
 
-            for cart_item in cart_items:
-                # determine size and shawarma info
-                size_name = cart_item.size.name if cart_item.size else ''
-                size_price = cart_item.size.price if cart_item.size else 0
-                rice_type_name = cart_item.rice_type.name if cart_item.rice_type else ''
-                shawarma_option_name = (cart_item.shawarma_option.name
-                                        if cart_item.shawarma_option else '')
-                shawarma_option_price = (cart_item.shawarma_option.price
-                                         if cart_item.shawarma_option else 0)
-
-                order_item = OrderItem.objects.create(
-                    order=order,
-                    menu_item=cart_item.menu_item,
-                    menu_item_name=cart_item.menu_item.name,
-                    size_name=size_name,
-                    size_price=size_price,
-                    rice_type_name=rice_type_name,
-                    shawarma_option_name=shawarma_option_name,
-                    shawarma_option_price=shawarma_option_price,
-                    quantity=cart_item.quantity,
-                    item_total=cart_item.get_total()
-                )
-
-                # freeze rice extras
-                for rice_extra in cart_item.rice_extras.all():
-                    OrderItemRiceExtra.objects.create(
-                        order_item=order_item,
-                        extra_name=rice_extra.extra.name,
-                        extra_price=rice_extra.extra.price,
-                        quantity=rice_extra.quantity
-                    )
-
-                # freeze shawarma extras
-                for shawarma_extra in cart_item.shawarma_extras.all():
-                    OrderItemShawarmaExtra.objects.create(
-                        order_item=order_item,
-                        extra_name=shawarma_extra.extra.name,
-                        extra_price=shawarma_extra.extra.price,
-                        is_added=shawarma_extra.is_added
-                    )
-
-                # freeze drinks
-                for drink in cart_item.drinks.all():
-                    OrderItemDrink.objects.create(
-                        order_item=order_item,
-                        drink_name=drink.drink.name,
-                        drink_price=drink.drink.price,
-                        quantity=drink.quantity
-                    )
-
-            # clear cart
-            cart.items.all().delete()
-
-        serializer = OrderSerializer(order)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(OrderSerializer(order).data,
+                        status=status.HTTP_201_CREATED)
 
 
 @extend_schema(tags=['Orders'])
 class OrderDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        # Reading is scoped to the owner in get_object(); only kitchen and
+        # admins may move an order to another status.
+        if self.request.method == 'PATCH':
+            return [IsKitchenOrAdmin()]
+        return [IsAuthenticated()]
 
     def get_object(self, order_id, user):
         try:
@@ -219,35 +84,19 @@ class OrderDetailView(APIView):
         serializer = OrderSerializer(order)
         return Response(serializer.data)
 
+    @extend_schema(request=OrderStatusSerializer,
+                   responses={200: OrderSerializer})
     def patch(self, request, order_id):
-        if not request.user.is_kitchen and not request.user.is_admin:
-            return Response(
-                {'error': 'Only kitchen staff and admins can update order status'},
-                status=status.HTTP_403_FORBIDDEN)
-
         order = self.get_object(order_id, request.user)
         if not order:
             return Response({'error': 'Order not found'},
                             status=status.HTTP_404_NOT_FOUND)
 
-        new_status = request.data.get('status')
-        valid_statuses = ['preparing', 'ready', 'cancelled']
+        serializer = OrderStatusSerializer(order, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
 
-        if new_status not in valid_statuses:
-            return Response(
-                {'error': f'Invalid status. Choose from {valid_statuses}'},
-                status=status.HTTP_400_BAD_REQUEST)
-
-        # can only update paid orders
-        if order.status not in ['paid', 'preparing']:
-            return Response(
-                {'error': f'Cannot update order with status: {order.status}'},
-                status=status.HTTP_400_BAD_REQUEST)
-
-        order.status = new_status
-        order.save()
-        serializer = OrderSerializer(order)
-        return Response(serializer.data)
+        return Response(OrderSerializer(order).data)
 
 class CancelOrderView(APIView):
     permission_classes = [IsAuthenticated]
