@@ -8,7 +8,8 @@ from order.models import (Order,Cart, CartItem, CartItemDrink, CartItemRiceExtra
 from menu.models import (MenuItemSize, RiceType, RiceExtra, ShawarmaExtra,
                          Drink, ShawarmaOption)
 from order.serializers import (CartItemCreateSerializer,
-                               CartItemUpdateSerializer, CartSerializer)
+                               CartItemUpdateSerializer, CartSerializer,
+                               RevertOrderResponseSerializer)
 from drf_spectacular.utils import extend_schema
 
 # Every relation the cart serializer and get_total() touch. Without these the
@@ -33,6 +34,7 @@ def load_cart(user):
 
 class CartView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = CartSerializer
 
     def get(self, request):
         serializer = CartSerializer(load_cart(request.user))
@@ -47,6 +49,7 @@ class CartView(APIView):
 
 class CartItemView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = CartSerializer
 
     @extend_schema(request=CartItemCreateSerializer,
                    responses={201: CartSerializer})
@@ -61,6 +64,19 @@ class CartItemView(APIView):
         return Response(CartSerializer(load_cart(request.user)).data,
                         status=status.HTTP_201_CREATED)
 
+
+class CartItemDetailView(APIView):
+    """
+    Removing one line.
+
+    Separate from CartItemView because both URLs used to point at that one
+    class, so POST /cart/items/5/ and DELETE /cart/items/ each reached a method
+    whose signature could not accept them - a TypeError, i.e. a 500.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = CartSerializer
+
     @extend_schema(responses={204: None})
     def delete(self, request, item_id):
         cart_item = CartItem.objects.filter(
@@ -74,6 +90,7 @@ class CartItemView(APIView):
 
 class UpdateCartItemView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = CartSerializer
 
     @extend_schema(request=CartItemUpdateSerializer,
                    responses={200: CartSerializer})
@@ -95,6 +112,7 @@ class UpdateCartItemView(APIView):
 
 class RevertOrderToCartView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = RevertOrderResponseSerializer
 
     def post(self, request, order_id):
         order = Order.objects.filter(
