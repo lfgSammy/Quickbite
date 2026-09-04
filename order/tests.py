@@ -444,3 +444,41 @@ class CartUpdateValidationTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.line.refresh_from_db()
         self.assertEqual(self.line.quantity, 1)
+
+
+class CartItemRoutingTests(APITestCase):
+    """
+    Both cart-item URLs used to resolve to the same view, so each exposed a
+    method it could not actually accept.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='routing', email='routing@example.com',
+            password='Passw0rdy', role='customer')
+        self.client.force_authenticate(self.user)
+        rice = MenuItem.objects.create(name='Jollof', item_type='rice')
+        size = MenuItemSize.objects.create(
+            menu_item=rice, name='Medium', price=Decimal('4000.00'))
+        cart = Cart.objects.create(customer=self.user)
+        self.line = CartItem.objects.create(
+            cart=cart, menu_item=rice, size=size, quantity=1)
+
+    def test_deleting_a_line_works(self):
+        response = self.client.delete(
+            reverse('cart-item-delete', args=[self.line.id]))
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(CartItem.objects.count(), 0)
+
+    def test_posting_to_a_specific_line_is_not_allowed(self):
+        response = self.client.post(
+            reverse('cart-item-delete', args=[self.line.id]), {}, format='json')
+        # 405, not the TypeError-driven 500 it used to be.
+        self.assertEqual(
+            response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_deleting_the_whole_collection_is_not_allowed(self):
+        response = self.client.delete(reverse('cart-item-add'))
+        self.assertEqual(
+            response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        self.assertEqual(CartItem.objects.count(), 1)
