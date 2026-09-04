@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from Quickbite.pagination import PaginatedListMixin
+from Quickbite.schema import MessageSerializer
 from Quickbite.permissions import IsCustomer, IsKitchenOrAdmin
 from order.models import Cart, Order
 from order.serializers import (OrderCreateSerializer, OrderSerializer,
@@ -13,6 +14,7 @@ from drf_spectacular.utils import extend_schema
 
 @extend_schema(tags=['Orders'])
 class OrderListView(PaginatedListMixin, APIView):
+    serializer_class = OrderSerializer
     def get_permissions(self):
         # Anyone signed in may list their own orders; only customers place them.
         if self.request.method == 'POST':
@@ -56,6 +58,7 @@ class OrderListView(PaginatedListMixin, APIView):
 
 @extend_schema(tags=['Orders'])
 class OrderDetailView(APIView):
+    serializer_class = OrderSerializer
     def get_permissions(self):
         # Reading is scoped to the owner in get_object(); only kitchen and
         # admins may move an order to another status.
@@ -100,6 +103,7 @@ class OrderDetailView(APIView):
 
 class CancelOrderView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = MessageSerializer
 
     def patch(self, request, order_id):
         order = Order.objects.filter(
