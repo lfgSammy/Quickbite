@@ -9,7 +9,14 @@ from drf_spectacular.utils import extend_schema
 from Quickbite.pagination import PaginatedListMixin
 from Quickbite.permissions import IsAdmin, IsAdminOrReadOnly
 from .models import User, Notification, OperatingHours
-from .serializers import UserSerializer, NotificationSerializer, LoginSerializer, RegisterSerializer
+from Quickbite.schema import MessageSerializer
+from .serializers import (UserSerializer, NotificationSerializer,
+                         LoginSerializer, RegisterSerializer,
+                         AuthResponseSerializer, ResetTokenSerializer,
+                         ForgotPasswordSerializer, ResetPasswordSerializer,
+                         VerifyResetOTPSerializer, GoogleOAuthSerializer,
+                         AssignRoleSerializer, RestaurantStatusSerializer,
+                         OperatingHoursSerializer)
 from django.utils import timezone
 from social_django.utils import psa
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -38,7 +45,9 @@ def validate_password(password):
 class GoogleOAuthView(APIView):
     permission_classes = [AllowAny]
     throttle_scope = 'login'
+    serializer_class = AuthResponseSerializer
 
+    @extend_schema(request=GoogleOAuthSerializer)
     def post(self, request):
         code = request.data.get('code')
         redirect_url = request.data.get('redirect_url')
@@ -117,6 +126,7 @@ class GoogleOAuthView(APIView):
 class RegisterView(APIView):
     permission_classes = [AllowAny]
     throttle_scope = 'register'
+    serializer_class = AuthResponseSerializer
 
     @extend_schema(request=RegisterSerializer)
     def post(self, request):
@@ -163,11 +173,13 @@ class RegisterView(APIView):
 class ForgotPasswordView(APIView):
     permission_classes = [AllowAny]
     throttle_scope = 'password_reset'
+    serializer_class = MessageSerializer
 
     # Identical for every request, so the response can't be used to test
     # whether an address has an account here.
     GENERIC_RESPONSE = {'message': 'OTP has been sent to your email'}
 
+    @extend_schema(request=ForgotPasswordSerializer)
     def post(self, request):
         email = request.data.get('email')
         if not email:
@@ -209,7 +221,9 @@ QuickBite Team
 class VerifyResetOTPView(APIView):
     permission_classes = [AllowAny]
     throttle_scope = 'otp_verify'
+    serializer_class = ResetTokenSerializer
 
+    @extend_schema(request=VerifyResetOTPSerializer)
     def post(self, request):
         email = request.data.get('email')
         code = request.data.get('code')
@@ -258,7 +272,9 @@ class VerifyResetOTPView(APIView):
 class ResetPasswordView(APIView):
     permission_classes = [AllowAny]
     throttle_scope = 'otp_verify'
+    serializer_class = MessageSerializer
 
+    @extend_schema(request=ResetPasswordSerializer)
     def post(self, request):
         reset_token = request.data.get('reset_token')
         new_password = request.data.get('new_password')
@@ -302,6 +318,7 @@ class ResetPasswordView(APIView):
 
 class UserListView(PaginatedListMixin, APIView):
     permission_classes = [IsAdmin]
+    serializer_class = UserSerializer
 
     def get(self, request):
         users = User.objects.all().order_by('username')
@@ -319,7 +336,9 @@ class UserListView(PaginatedListMixin, APIView):
 
 class AssignRoleView(APIView):
     permission_classes = [IsAdmin]
+    serializer_class = UserSerializer
 
+    @extend_schema(request=AssignRoleSerializer)
     def patch(self, request, user_id):
         new_role = request.data.get('role')
         valid_roles = ['customer', 'kitchen', 'admin']
@@ -346,6 +365,7 @@ class AssignRoleView(APIView):
 class LoginView(APIView):
     permission_classes = [AllowAny]
     throttle_scope = 'login'
+    serializer_class = AuthResponseSerializer
 
     @extend_schema(request=LoginSerializer)
     def post(self, request):
@@ -364,6 +384,7 @@ class LoginView(APIView):
 
 class ProfileView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = UserSerializer
 
     def get(self, request):
         # --- FIX 2: Pass request.user instance ---
@@ -384,6 +405,7 @@ class ProfileView(APIView):
 
 class RestaurantStatusView(APIView):
     permission_classes = [AllowAny]
+    serializer_class = RestaurantStatusSerializer
 
     def get(self, request):
         now = timezone.localtime()
@@ -408,6 +430,7 @@ class RestaurantStatusView(APIView):
 
 class NotificationListView(PaginatedListMixin, APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = NotificationSerializer
 
     def get(self, request):
         # --- FIX 3: Close filter parentheses correctly ---
@@ -422,6 +445,7 @@ class NotificationListView(PaginatedListMixin, APIView):
 
 class OperatingHoursView(APIView):
     permission_classes = [IsAdminOrReadOnly]
+    serializer_class = OperatingHoursSerializer
 
     def get(self, request):
         hours = OperatingHours.objects.all().order_by('day')
