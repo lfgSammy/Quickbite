@@ -19,7 +19,7 @@ class RiceTypeSerializer(serializers.ModelSerializer):
 class MenuItemSizeSerializer(serializers.ModelSerializer):
     class Meta:
         model = MenuItemSize
-        fields = ['id', 'name', 'price']
+        fields = ['id', 'name', 'price', 'is_available']
 
 
 class ShawarmaOptionSerializer(serializers.ModelSerializer):
@@ -74,6 +74,9 @@ class MenuItemSerializer(ImageUrlMixin, serializers.ModelSerializer):
             ]
         else:
             data.pop('shawarma_options', None)
+            data['sizes'] = [
+                size for size in data.get('sizes', []) if size['is_available']
+            ]
 
         return data
 
