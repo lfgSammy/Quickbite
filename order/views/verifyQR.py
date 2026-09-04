@@ -1,7 +1,9 @@
+import uuid
+
 from django.db import transaction
 from rest_framework import status
 from rest_framework import serializers as drf_serializers
-from rest_framework.permissions import IsAuthenticated
+from Quickbite.permissions import IsAdmin, IsKitchenOrAdmin
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from order.models import Order
@@ -9,7 +11,7 @@ from order.serializers import OrderSerializer
 from drf_spectacular.utils import extend_schema, inline_serializer
 
 class VerifyQRView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsKitchenOrAdmin]
 
 
     @extend_schema(
@@ -17,16 +19,17 @@ class VerifyQRView(APIView):
                                       fields={'qr_code':drf_serializers.CharField})
     )
     def post(self, request):
-        if not request.user.is_kitchen and not request.user.is_admin:
-            return Response({'error': 'Not authorized'},
-                            status=status.HTTP_403_FORBIDDEN)
-
         qr_code = request.data.get('qr_code')
         if not qr_code:
             return Response({'error': 'QR code is required'},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        order = Order.objects.filter(qr_code=qr_code).first()
+        # qr_code is a UUIDField: anything that isn't a UUID raises rather
+        # than simply not matching, so a stray QR code used to 500 here.
+        try:
+            order = Order.objects.filter(qr_code=uuid.UUID(str(qr_code))).first()
+        except (ValueError, AttributeError, TypeError):
+            order = None
         if not order:
             return Response({'error': 'Invalid QR code'},
                             status=status.HTTP_404_NOT_FOUND)
@@ -51,13 +54,9 @@ class VerifyQRView(APIView):
 
 @extend_schema(tags=['Admin'])
 class AdminDashboardView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdmin]
 
     def get(self, request):
-        if not request.user.is_admin:
-            return Response({'error': 'Admin access required'},
-                            status=status.HTTP_403_FORBIDDEN)
-
         from django.db.models import Sum, Count
         from django.utils import timezone
         from datetime import timedelta
