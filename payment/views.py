@@ -18,7 +18,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Payment
-from .serializers import PaymentSerializer
+from .serializers import (PaymentSerializer,
+                          InitializePaymentRequestSerializer,
+                          InitializePaymentResponseSerializer,
+                          VerifyPaymentRequestSerializer,
+                          VerifyPaymentResponseSerializer,
+                          WebhookAckSerializer)
 from order.models import Order
 from users.models import Notification
 
@@ -162,8 +167,9 @@ def settle_payment(payment_id, paystack_amount_kobo):
 
 class InitializePaymentView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = InitializePaymentResponseSerializer
 
-    @extend_schema(request=PaymentSerializer)
+    @extend_schema(request=InitializePaymentRequestSerializer)
     def post(self, request):
         order_id = request.data.get('order_id')
 
@@ -226,8 +232,9 @@ class InitializePaymentView(APIView):
 
 class VerifyPaymentView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = VerifyPaymentResponseSerializer
 
-    @extend_schema(request=PaymentSerializer)
+    @extend_schema(request=VerifyPaymentRequestSerializer)
     def post(self, request):
         reference = request.data.get('reference')
         if not reference:
@@ -293,6 +300,7 @@ class VerifyPaymentView(APIView):
 class PaystackWebhookView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    serializer_class = WebhookAckSerializer
 
     def post(self, request):
         paystack_signature = request.headers.get('x-paystack-signature')
