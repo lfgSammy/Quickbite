@@ -22,10 +22,13 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/user/', include('users.urls')),
-    path('api/menu/', include('menu.urls')),
-    path('api/payment/', include('payment.urls')),
-    path('api/order/', include('order.urls')),
+    # Every app mounts at api/ and owns its own full path, so routes read
+    # /api/menu/ and /api/orders/ rather than /api/menu/menu/ and
+    # /api/order/orders/. The four apps share no route names.
+    path('api/', include('users.urls')),
+    path('api/', include('menu.urls')),
+    path('api/', include('payment.urls')),
+    path('api/', include('order.urls')),
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
  ]+ static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from drf_spectacular.utils import extend_schema
 from Quickbite.pagination import PaginatedListMixin
+from Quickbite.permissions import IsAdmin, IsAdminOrReadOnly
 from .models import User, Notification, OperatingHours
 from .serializers import UserSerializer, NotificationSerializer, LoginSerializer, RegisterSerializer
 from django.utils import timezone
@@ -300,13 +301,9 @@ class ResetPasswordView(APIView):
         return Response({'message': 'Password reset successfully. You can now login.'})
 
 class UserListView(PaginatedListMixin, APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdmin]
 
     def get(self, request):
-        if not request.user.is_admin:
-            return Response({'error': 'Only admins can view users'},
-                            status=status.HTTP_403_FORBIDDEN)
-
         users = User.objects.all().order_by('username')
 
         search = request.query_params.get('search')
@@ -321,14 +318,9 @@ class UserListView(PaginatedListMixin, APIView):
 
 
 class AssignRoleView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdmin]
 
     def patch(self, request, user_id):
-        # only admin can assign roles
-        if not request.user.is_admin:
-            return Response({'error': 'Only admins can assign roles'},
-                            status=status.HTTP_403_FORBIDDEN)
-
         new_role = request.data.get('role')
         valid_roles = ['customer', 'kitchen', 'admin']
 
@@ -429,10 +421,7 @@ class NotificationListView(PaginatedListMixin, APIView):
         return Response({'message':'All notifications are read'})
 
 class OperatingHoursView(APIView):
-    def get_permissions(self):
-        if self.request.method == 'GET':
-            return [AllowAny()]
-        return [IsAuthenticated()]
+    permission_classes = [IsAdminOrReadOnly]
 
     def get(self, request):
         hours = OperatingHours.objects.all().order_by('day')
@@ -447,13 +436,12 @@ class OperatingHoursView(APIView):
         return Response(data)
 
     def post(self, request):
-        if not request.user.is_admin:
-            return Response({'error':'Admin access is required'},
-                            status=status.HTTP_403_FORBIDDEN)
         day = request.data.get('day')
         open_time = request.data.get('open_time')
         close_time = request.data.get('close_time')
-        is_open = request.data.get('is_open')
+        # Non-null on the model, so an omitted value has to fall back rather
+        # than write None - posting hours without it used to be a 500.
+        is_open = request.data.get('is_open', True)
 
         if day is None or not open_time or not close_time:
             return Response({'error':'All fields are required'},
