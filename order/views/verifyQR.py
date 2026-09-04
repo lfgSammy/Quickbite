@@ -2,22 +2,21 @@ import uuid
 
 from django.db import transaction
 from rest_framework import status
-from rest_framework import serializers as drf_serializers
 from Quickbite.permissions import IsAdmin, IsKitchenOrAdmin
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from order.models import Order
-from order.serializers import OrderSerializer
-from drf_spectacular.utils import extend_schema, inline_serializer
+from order.serializers import (AdminDashboardSerializer,
+                               VerifyQRRequestSerializer,
+                               VerifyQRResponseSerializer)
+from drf_spectacular.utils import extend_schema
 
 class VerifyQRView(APIView):
     permission_classes = [IsKitchenOrAdmin]
+    serializer_class = VerifyQRResponseSerializer
 
 
-    @extend_schema(
-            request=inline_serializer(name='VerifyQR',
-                                      fields={'qr_code':drf_serializers.CharField})
-    )
+    @extend_schema(request=VerifyQRRequestSerializer)
     def post(self, request):
         qr_code = request.data.get('qr_code')
         if not qr_code:
@@ -55,6 +54,7 @@ class VerifyQRView(APIView):
 @extend_schema(tags=['Admin'])
 class AdminDashboardView(APIView):
     permission_classes = [IsAdmin]
+    serializer_class = AdminDashboardSerializer
 
     def get(self, request):
         from django.db.models import Sum, Count
