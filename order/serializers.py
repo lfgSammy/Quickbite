@@ -100,11 +100,25 @@ class CartItemSerializer(serializers.ModelSerializer):
 class CartSerializer(serializers.ModelSerializer):
     items = CartItemSerializer(many=True, read_only=True)
     total = money(source='get_total')
+    is_guest = serializers.BooleanField(read_only=True)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # The token is only meaningful while the cart has no owner - once it is
+        # claimed the account identifies it, and echoing it back would invite
+        # clients to keep using a credential they no longer need.
+        if not instance.is_guest:
+            data.pop('token', None)
+        return data
 
     class Meta:
         model = Cart
-        fields = ['id', 'items', 'total', 'updated_at']
-        read_only_fields = ['updated_at']
+        fields = ['id', 'items', 'total', 'token', 'is_guest', 'updated_at']
+        read_only_fields = ['token', 'updated_at']
+
+
+class ClaimCartSerializer(serializers.Serializer):
+    token = serializers.UUIDField()
 
 
 class OrderItemRiceExtraSerializer(serializers.ModelSerializer):

@@ -8,13 +8,25 @@ from menu.models import (MenuItem, MenuItemSize, RiceType, RiceExtra,
 
 
 class Cart(models.Model):
+    # Nullable so someone can fill a cart before they have an account -
+    # requiring sign-up to add the first item loses customers at the exact
+    # moment they have decided to buy. A guest cart is addressed by its token
+    # instead, and claimed by the user when they log in.
     customer = models.OneToOneField(
-        User, on_delete=models.CASCADE, related_name='cart')
+        User, on_delete=models.CASCADE, related_name='cart',
+        null=True, blank=True)
+    token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.customer.username}'s Cart"
+        if self.customer_id:
+            return f"{self.customer.username}'s Cart"
+        return f'Guest cart {self.token}'
+
+    @property
+    def is_guest(self):
+        return self.customer_id is None
 
     def get_total(self):
         return sum(

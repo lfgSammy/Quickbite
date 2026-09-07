@@ -482,3 +482,156 @@ class CartItemRoutingTests(APITestCase):
         self.assertEqual(
             response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
         self.assertEqual(CartItem.objects.count(), 1)
+
+
+class GuestCartTests(APITestCase):
+    """
+    A cart no longer needs an account. Requiring sign-up before the first
+    "add to cart" lost people at the moment they had decided to buy.
+    """
+
+    def setUp(self):
+        self.rice = MenuItem.objects.create(name='Party Jollof', item_type='rice')
+        self.size = MenuItemSize.objects.create(
+            menu_item=self.rice, name='Medium', price=Decimal('4000.00'))
+
+    def add_as_guest(self, token=None, quantity=1):
+        headers = {'HTTP_X_CART_TOKEN': token} if token else {}
+        return self.client.post(
+            reverse('cart-item-add'),
+            {'menu_item_id': self.rice.id, 'size_id': self.size.id,
+             'quantity': quantity},
+            format='json', **headers)
+
+    def test_a_guest_can_add_to_cart_without_an_account(self):
+        response = self.add_as_guest()
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data['is_guest'])
+        self.assertIsNotNone(response.data['token'])
+        self.assertEqual(response.data['total'], '4000.00')
+
+    def test_the_token_brings_the_same_cart_back(self):
+        token = self.add_as_guest().data['token']
+
+        self.add_as_guest(token=token)
+        response = self.client.get(
+            reverse('cart'), HTTP_X_CART_TOKEN=token)
+
+        self.assertEqual(len(response.data['items']), 2)
+        self.assertEqual(Cart.objects.count(), 1)
+
+    def test_without_a_token_a_guest_gets_a_different_cart(self):
+        first = self.add_as_guest().data['token']
+        second = self.add_as_guest().data['token']
+        self.assertNotEqual(first, second)
+
+    def test_reading_a_cart_with_no_token_creates_nothing(self):
+        response = self.client.get(reverse('cart'))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['items'], [])
+        # A row per anonymous visitor who merely loads the page would be waste.
+        self.assertEqual(Cart.objects.count(), 0)
+
+    def test_a_malformed_token_is_not_a_500(self):
+        response = self.client.get(
+            reverse('cart'), HTTP_X_CART_TOKEN='not-a-uuid')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_a_guest_cannot_place_an_order(self):
+        token = self.add_as_guest().data['token']
+        response = self.client.post(
+            reverse('order-list'), {'pickup_time': '2030-01-01T12:00:00Z'},
+            format='json', HTTP_X_CART_TOKEN=token)
+        # Checkout is where the account is genuinely needed.
+        self.assertIn(response.status_code,
+                      (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+    def test_a_guest_cannot_reach_another_guests_cart_line(self):
+        mine = self.add_as_guest()
+        theirs_token = self.add_as_guest().data['token']
+        line_id = mine.data['items'][0]['id']
+
+        response = self.client.delete(
+            reverse('cart-item-delete', args=[line_id]),
+            HTTP_X_CART_TOKEN=theirs_token)
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(CartItem.objects.filter(id=line_id).count(), 1)
+
+
+class ClaimCartTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='claimer', email='claimer@example.com',
+            password='Passw0rdy', role='customer')
+        self.rice = MenuItem.objects.create(name='Party Jollof', item_type='rice')
+        self.size = MenuItemSize.objects.create(
+            menu_item=self.rice, name='Medium', price=Decimal('4000.00'))
+
+    def guest_cart_with_one_line(self):
+        response = self.client.post(
+            reverse('cart-item-add'),
+            {'menu_item_id': self.rice.id, 'size_id': self.size.id,
+             'quantity': 1},
+            format='json')
+        return response.data['token']
+
+    def claim(self, token):
+        self.client.force_authenticate(self.user)
+        return self.client.post(
+            reverse('cart-claim'), {'token': token}, format='json')
+
+    def test_claiming_gives_the_guest_cart_to_the_user(self):
+        token = self.guest_cart_with_one_line()
+
+        response = self.claim(token)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data['is_guest'])
+        self.assertEqual(len(response.data['items']), 1)
+        self.assertEqual(Cart.objects.filter(customer=self.user).count(), 1)
+        self.assertEqual(Cart.objects.filter(customer__isnull=True).count(), 0)
+
+    def test_claiming_merges_into_a_cart_the_user_already_had(self):
+        existing = Cart.objects.create(customer=self.user)
+        CartItem.objects.create(
+            cart=existing, menu_item=self.rice, size=self.size, quantity=2)
+
+        token = self.guest_cart_with_one_line()
+        response = self.claim(token)
+
+        # Nothing chosen while signed out is lost.
+        self.assertEqual(len(response.data['items']), 2)
+        self.assertEqual(response.data['total'], '12000.00')
+        self.assertEqual(Cart.objects.filter(customer__isnull=True).count(), 0)
+
+    def test_claiming_an_unknown_token_is_not_an_error(self):
+        import uuid as _uuid
+        response = self.claim(str(_uuid.uuid4()))
+
+        # An already-claimed or expired token just means there was nothing to
+        # merge; the caller still gets their own cart back.
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['items'], [])
+
+    def test_a_claimed_cart_stops_answering_to_its_old_token(self):
+        token = self.guest_cart_with_one_line()
+        self.claim(token)
+
+        self.client.force_authenticate(user=None)
+        response = self.client.get(reverse('cart'), HTTP_X_CART_TOKEN=token)
+
+        self.assertEqual(response.data['items'], [])
+        self.assertIsNone(response.data['id'])
+
+    def test_a_signed_in_user_ignores_a_stray_token(self):
+        token = self.guest_cart_with_one_line()
+        self.client.force_authenticate(self.user)
+
+        response = self.client.get(reverse('cart'), HTTP_X_CART_TOKEN=token)
+
+        # Signed in, the account decides which cart is yours - not a header.
+        self.assertFalse(response.data['is_guest'])
+        self.assertEqual(response.data['items'], [])

@@ -1,6 +1,8 @@
+import uuid
+
 from django.db import transaction
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from order.models import (Order,Cart, CartItem, CartItemDrink, CartItemRiceExtra,
@@ -9,6 +11,7 @@ from menu.models import (MenuItemSize, RiceType, RiceExtra, ShawarmaExtra,
                          Drink, ShawarmaOption)
 from order.serializers import (CartItemCreateSerializer,
                                CartItemUpdateSerializer, CartSerializer,
+                               ClaimCartSerializer,
                                RevertOrderResponseSerializer)
 from drf_spectacular.utils import extend_schema
 
@@ -25,44 +28,86 @@ CART_PREFETCH = (
     'items__drinks__drink',
 )
 
+# Guests carry their cart in this header. It is the only thing identifying a
+# guest cart, so the client stores it and sends it on every cart call.
+CART_TOKEN_HEADER = 'X-Cart-Token'
 
-def load_cart(user):
-    """The user's cart with everything the serializer needs already loaded."""
-    cart, _ = Cart.objects.get_or_create(customer=user)
+
+def guest_cart_from_token(token):
+    """Look up an unclaimed cart by token, or None."""
+    if not token:
+        return None
+    try:
+        token = uuid.UUID(str(token))
+    except (ValueError, AttributeError, TypeError):
+        # token is a UUIDField: a malformed value raises rather than simply
+        # not matching, which would be a 500 on a stale client token.
+        return None
+    return Cart.objects.filter(token=token, customer__isnull=True).first()
+
+
+def resolve_cart(request, create=True):
+    """
+    The cart this request is acting on.
+
+    Signed in, it is the user's cart. Otherwise it is the guest cart named by
+    the X-Cart-Token header - creating one if the caller has no usable token,
+    so a first "add to cart" works with no account and no round trip.
+    """
+    if request.user.is_authenticated:
+        cart, _ = Cart.objects.get_or_create(customer=request.user)
+        return cart
+
+    cart = guest_cart_from_token(request.headers.get(CART_TOKEN_HEADER))
+    if cart or not create:
+        return cart
+    return Cart.objects.create()
+
+
+def load_cart(cart):
+    """Re-read a cart with everything the serializer needs already loaded."""
     return Cart.objects.prefetch_related(*CART_PREFETCH).get(pk=cart.pk)
 
 
+def cart_response(cart, status_code=status.HTTP_200_OK):
+    return Response(CartSerializer(load_cart(cart)).data, status=status_code)
+
+
 class CartView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
     serializer_class = CartSerializer
 
     def get(self, request):
-        serializer = CartSerializer(load_cart(request.user))
-        return Response(serializer.data)
+        cart = resolve_cart(request, create=False)
+        if cart is None:
+            # No account and no token yet: an empty cart, without writing a row
+            # for every anonymous visitor who merely loads the page.
+            return Response({'id': None, 'items': [], 'total': '0.00',
+                             'token': None, 'is_guest': True})
+        return cart_response(cart)
 
     def delete(self, request):
-        cart = Cart.objects.filter(customer=request.user).first()
+        cart = resolve_cart(request, create=False)
         if cart:
             cart.items.all().delete()
         return Response({'message': 'Cart cleared'})
 
 
 class CartItemView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
     serializer_class = CartSerializer
 
     @extend_schema(request=CartItemCreateSerializer,
                    responses={201: CartSerializer})
     def post(self, request):
-        cart, _ = Cart.objects.get_or_create(customer=request.user)
+        cart = resolve_cart(request)
 
         serializer = CartItemCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         with transaction.atomic():
             serializer.save(cart=cart)
 
-        return Response(CartSerializer(load_cart(request.user)).data,
-                        status=status.HTTP_201_CREATED)
+        return cart_response(cart, status.HTTP_201_CREATED)
 
 
 class CartItemDetailView(APIView):
@@ -74,13 +119,16 @@ class CartItemDetailView(APIView):
     whose signature could not accept them - a TypeError, i.e. a 500.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
     serializer_class = CartSerializer
 
     @extend_schema(responses={204: None})
     def delete(self, request, item_id):
-        cart_item = CartItem.objects.filter(
-            id=item_id, cart__customer=request.user).first()
+        cart = resolve_cart(request, create=False)
+        if cart is None:
+            return Response({'error': 'Item not found in cart'},
+                            status=status.HTTP_404_NOT_FOUND)
+        cart_item = CartItem.objects.filter(id=item_id, cart=cart).first()
         if not cart_item:
             return Response({'error': 'Item not found in cart'},
                             status=status.HTTP_404_NOT_FOUND)
@@ -89,14 +137,19 @@ class CartItemDetailView(APIView):
 
 
 class UpdateCartItemView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
     serializer_class = CartSerializer
 
     @extend_schema(request=CartItemUpdateSerializer,
                    responses={200: CartSerializer})
     def patch(self, request, item_id):
+        cart = resolve_cart(request, create=False)
+        if cart is None:
+            return Response({'error': 'Item not found in cart'},
+                            status=status.HTTP_404_NOT_FOUND)
+
         cart_item = CartItem.objects.select_related('menu_item').filter(
-            id=item_id, cart__customer=request.user).first()
+            id=item_id, cart=cart).first()
         if not cart_item:
             return Response({'error': 'Item not found in cart'},
                             status=status.HTTP_404_NOT_FOUND)
@@ -107,7 +160,44 @@ class UpdateCartItemView(APIView):
         with transaction.atomic():
             serializer.save()
 
-        return Response(CartSerializer(load_cart(request.user)).data)
+        return cart_response(cart)
+
+
+class ClaimCartView(APIView):
+    """
+    Hand a guest cart to the account that just signed in.
+
+    Called once after login or registration. If the user had no cart, the guest
+    cart simply becomes theirs; if they already had one, the guest lines are
+    moved across so nothing chosen while signed out is lost.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = CartSerializer
+
+    @extend_schema(request=ClaimCartSerializer,
+                   responses={200: CartSerializer})
+    def post(self, request):
+        serializer = ClaimCartSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        with transaction.atomic():
+            guest = guest_cart_from_token(serializer.validated_data['token'])
+            own = Cart.objects.filter(customer=request.user).first()
+
+            if guest is None:
+                # Nothing to claim - an already-claimed or expired token is not
+                # an error, the caller just gets whatever cart they now have.
+                own = own or Cart.objects.create(customer=request.user)
+            elif own is None:
+                guest.customer = request.user
+                guest.save(update_fields=['customer'])
+                own = guest
+            else:
+                guest.items.update(cart=own)
+                guest.delete()
+
+        return cart_response(own)
 
 
 class RevertOrderToCartView(APIView):
@@ -210,7 +300,7 @@ class RevertOrderToCartView(APIView):
             order.status = 'cancelled'
             order.save()
 
-        serializer = CartSerializer(load_cart(request.user))
+        serializer = CartSerializer(load_cart(cart))
         return Response({
             'message': 'Order reverted to cart successfully',
             'cart': serializer.data
