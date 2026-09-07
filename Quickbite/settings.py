@@ -15,6 +15,7 @@ from decouple import config
 from datetime import timedelta
 import dj_database_url
 import cloudinary
+from corsheaders.defaults import default_headers
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -37,6 +38,12 @@ ALLOWED_HOSTS = config(
 )
 CORS_ALLOWED_ORIGINS= ['http://localhost:3000',
                        'https://quickbiteview.vercel.app']
+
+# A guest cart is addressed by X-Cart-Token, which is a custom header - so the
+# browser preflights every request carrying it and blocks the request outright
+# unless the header is named here. Without this the frontend cannot reach *any*
+# endpoint (even open ones like the menu) once a guest cart token exists.
+CORS_ALLOW_HEADERS = (*default_headers, 'x-cart-token')
 FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
 CSRF_TRUSTED_ORIGINS = [
     'https://quickbite-production-100f.up.railway.app',
