@@ -20,10 +20,18 @@ from .serializers import (UserSerializer, NotificationSerializer,
 from django.utils import timezone
 from social_django.utils import psa
 from rest_framework_simplejwt.tokens import RefreshToken
+import logging
+
 import requests as http_requests
+from django.db import IntegrityError, transaction
 from django.conf import settings
 from django.core.mail import send_mail
 from .models import PasswordResetOTP
+
+
+logger = logging.getLogger(__name__)
+
+GOOGLE_TIMEOUT = 15  # seconds
 
 
 def validate_email(email):
@@ -58,35 +66,62 @@ class GoogleOAuthView(APIView):
         
         token_url = 'https://oauth2.googleapis.com/token'
         token_data = {
-            'code':code,
+            'code': code,
             'client_id': settings.SOCIAL_AUTH_GOOGLE_OAUTH2_KEY,
             'client_secret': settings.SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET,
-            'redirect_url':redirect_url,
-            'grant_type':'authorization_code',
+            # Must be `redirect_uri`, and must match what the frontend sent to
+            # Google's consent screen. This was `redirect_url`, which Google
+            # does not recognise - so it received no redirect URI at all and
+            # rejected every code exchange. (The frontend still posts it to us
+            # as `redirect_url`; only the name sent on to Google changes.)
+            'redirect_uri': redirect_url,
+            'grant_type': 'authorization_code',
         }
-        token_response = http_requests.post(token_url, data=token_data)
-        token_json = token_response.json()
 
-        if 'error' in token_json:
-            return Response({'error':'Failed to exchange code for token'},
+        # Bounded like the Paystack calls: without a timeout, a slow Google
+        # holds a server worker for as long as it likes.
+        try:
+            token_response = http_requests.post(
+                token_url, data=token_data, timeout=GOOGLE_TIMEOUT)
+            token_json = token_response.json()
+        except (http_requests.RequestException, ValueError):
+            logger.exception('Google token exchange failed')
+            return Response(
+                {'error': 'Could not reach Google. Please try again.'},
+                status=status.HTTP_502_BAD_GATEWAY)
+
+        if 'error' in token_json or not token_json.get('access_token'):
+            logger.warning('Google rejected the code exchange: %s',
+                           token_json.get('error'))
+            return Response({'error': 'Failed to exchange code for token'},
                             status=status.HTTP_400_BAD_REQUEST)
-        access_token = token_json.get('access_token')
+        access_token = token_json['access_token']
 
-        # get user info from Google
-        user_info_url = 'https://www.googleapis.com/oauth2/v2/userinfo'
-        user_info_response = http_requests.get(
-            user_info_url,
-            headers={'Authorization': f'Bearer {access_token}'}
-        )
-        user_info = user_info_response.json()
+        try:
+            user_info_response = http_requests.get(
+                'https://www.googleapis.com/oauth2/v2/userinfo',
+                headers={'Authorization': f'Bearer {access_token}'},
+                timeout=GOOGLE_TIMEOUT,
+            )
+            user_info = user_info_response.json()
+        except (http_requests.RequestException, ValueError):
+            logger.exception('Google userinfo request failed')
+            return Response(
+                {'error': 'Could not reach Google. Please try again.'},
+                status=status.HTTP_502_BAD_GATEWAY)
 
         email = user_info.get('email')
-        name = user_info.get('name', '')
-        google_id = user_info.get('id')
 
         if not email:
             return Response({'error': 'Could not get email from Google'},
                             status=status.HTTP_400_BAD_REQUEST)
+
+        # The address is about to be matched to an existing account and signed
+        # straight into it, so it has to be one Google has actually confirmed.
+        if not user_info.get('verified_email'):
+            return Response(
+                {'error': 'Your Google account email is not verified.'},
+                status=status.HTTP_400_BAD_REQUEST)
 
         # normalize so this matches an existing account regardless of casing
         email = email.lower()
@@ -154,14 +189,34 @@ class RegisterView(APIView):
 
         if User.objects.filter(email__iexact=email).exists():
             return Response({'error':'Email already exist'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        user = User.objects.create_user(
-            username=username,
-            email=email,
-            password=password,
-            phone_number=phone_number if phone_number else None,
-            role='customer'
-        )
+
+        phone_number = phone_number.strip() if phone_number else None
+
+        # phone_number is unique in the database but was never checked here,
+        # so a number already on another account reached create_user() and
+        # surfaced as an IntegrityError - a 500 instead of a reason.
+        if phone_number and User.objects.filter(
+                phone_number=phone_number).exists():
+            return Response(
+                {'error': 'An account with this phone number already exists'},
+                status=status.HTTP_400_BAD_REQUEST)
+
+        # The checks above can still lose a race with a simultaneous signup
+        # for the same username, email or phone; the constraint is the final
+        # word, so turn its failure into a 400 as well.
+        try:
+            with transaction.atomic():
+                user = User.objects.create_user(
+                    username=username,
+                    email=email,
+                    password=password,
+                    phone_number=phone_number,
+                    role='customer'
+                )
+        except IntegrityError:
+            return Response(
+                {'error': 'An account with these details already exists'},
+                status=status.HTTP_400_BAD_REQUEST)
 
         refresh = RefreshToken.for_user(user)    
         return Response({
