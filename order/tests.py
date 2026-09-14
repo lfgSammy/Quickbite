@@ -1,3 +1,8 @@
+from unittest.mock import patch
+
+from django.core import mail
+from order.signals import send_ready_email
+from users.models import Notification
 from datetime import timedelta
 from decimal import Decimal
 
@@ -635,3 +640,76 @@ class ClaimCartTests(APITestCase):
         # Signed in, the account decides which cart is yours - not a header.
         self.assertFalse(response.data['is_guest'])
         self.assertEqual(response.data['items'], [])
+
+
+class OrderNotificationTests(APITestCase):
+    """
+    Notifications fire once, on the status change that earns them - and the
+    kitchen hears about an order when it is paid, not when it is placed.
+    """
+
+    def setUp(self):
+        self.chef = User.objects.create_user(
+            username='chef', email='chef@example.com',
+            password='Passw0rdy', role='kitchen')
+        self.customer = User.objects.create_user(
+            username='diner', email='diner@example.com',
+            password='Passw0rdy', role='customer')
+        self.order = Order.objects.create(
+            customer=self.customer, total_amount=Decimal('4000.00'),
+            pickup_time=timezone.now() + timedelta(hours=2), status='pending')
+
+    def kitchen_notes(self):
+        return Notification.objects.filter(user=self.chef)
+
+    def move_to(self, new_status):
+        self.order.status = new_status
+        self.order.save()
+
+    def test_placing_an_unpaid_order_does_not_ping_the_kitchen(self):
+        # This used to fire on creation, for orders that might never be paid.
+        self.assertEqual(self.kitchen_notes().count(), 0)
+
+    def test_payment_is_what_tells_the_kitchen(self):
+        self.move_to('paid')
+
+        self.assertEqual(self.kitchen_notes().count(), 1)
+        self.assertIn('paid order', self.kitchen_notes().first().message)
+        self.assertEqual(Notification.objects.filter(
+            user=self.customer, message__icontains='Payment confirmed'
+        ).count(), 1)
+
+    def test_saving_a_paid_order_again_sends_nothing_new(self):
+        self.move_to('paid')
+
+        self.order.special_instructions = 'no pepper'
+        self.order.save()
+
+        self.assertEqual(self.kitchen_notes().count(), 1)
+        self.assertEqual(Notification.objects.filter(
+            user=self.customer, message__icontains='Payment confirmed'
+        ).count(), 1)
+
+    def test_marking_ready_does_not_send_mail_inside_the_request(self):
+        self.move_to('paid')
+        mail.outbox.clear()
+
+        with patch('order.signals.threading.Thread') as mock_thread:
+            with self.captureOnCommitCallbacks(execute=False) as callbacks:
+                self.move_to('ready')
+            # Nothing went out while the kitchen's request was still running.
+            self.assertEqual(len(mail.outbox), 0)
+            mock_thread.assert_not_called()
+
+            for callback in callbacks:
+                callback()
+            # Only after commit, and on a background thread.
+            mock_thread.assert_called_once()
+            self.assertTrue(mock_thread.call_args.kwargs.get('daemon'))
+
+    def test_the_ready_email_itself_is_correct(self):
+        send_ready_email('diner', 'diner@example.com', self.order.id)
+
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ['diner@example.com'])
+        self.assertIn(f'#{self.order.id}', mail.outbox[0].body)
