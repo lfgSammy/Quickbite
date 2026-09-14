@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock, patch
+
 from django.core import mail
 from django.core.cache import cache
 from django.urls import reverse
@@ -114,3 +116,123 @@ class ThrottleTests(APITestCase):
             for _ in range(15)
         ]
         self.assertIn(status.HTTP_429_TOO_MANY_REQUESTS, codes)
+
+
+class GoogleOAuthTests(APITestCase):
+    def setUp(self):
+        cache.clear()
+
+    def _google(self, token_json=None, user_info=None):
+        token_resp = MagicMock()
+        token_resp.json.return_value = token_json or {'access_token': 'tok'}
+        info_resp = MagicMock()
+        info_resp.json.return_value = user_info or {
+            'email': 'Ngozi@Gmail.com', 'verified_email': True}
+        return token_resp, info_resp
+
+    @patch('users.views.http_requests.get')
+    @patch('users.views.http_requests.post')
+    def test_the_redirect_uri_reaches_google_under_its_real_name(
+            self, mock_post, mock_get):
+        mock_post.return_value, mock_get.return_value = self._google()
+
+        response = self.client.post(
+            reverse('google-oauth'),
+            {'code': 'abc', 'redirect_url': 'https://quickbite.app/auth/google'},
+            format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        sent = mock_post.call_args.kwargs['data']
+        # Google only recognises `redirect_uri`. Sending `redirect_url` meant it
+        # received no redirect URI and rejected every exchange.
+        self.assertEqual(sent['redirect_uri'], 'https://quickbite.app/auth/google')
+        self.assertNotIn('redirect_url', sent)
+
+    @patch('users.views.http_requests.get')
+    @patch('users.views.http_requests.post')
+    def test_both_google_calls_have_a_timeout(self, mock_post, mock_get):
+        mock_post.return_value, mock_get.return_value = self._google()
+
+        self.client.post(reverse('google-oauth'), {'code': 'abc'}, format='json')
+
+        self.assertIsNotNone(mock_post.call_args.kwargs.get('timeout'))
+        self.assertIsNotNone(mock_get.call_args.kwargs.get('timeout'))
+
+    @patch('users.views.http_requests.post')
+    def test_google_being_unreachable_is_a_502_not_a_500(self, mock_post):
+        import requests
+        mock_post.side_effect = requests.ConnectionError('down')
+
+        response = self.client.post(
+            reverse('google-oauth'), {'code': 'abc'}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+
+    @patch('users.views.http_requests.get')
+    @patch('users.views.http_requests.post')
+    def test_an_unverified_google_email_cannot_sign_into_an_account(
+            self, mock_post, mock_get):
+        User.objects.create_user(
+            username='victim', email='victim@example.com',
+            password='Passw0rdOK', role='customer')
+        mock_post.return_value, mock_get.return_value = self._google(
+            user_info={'email': 'victim@example.com', 'verified_email': False})
+
+        response = self.client.post(
+            reverse('google-oauth'), {'code': 'abc'}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertNotIn('access', response.data)
+
+    @patch('users.views.http_requests.get')
+    @patch('users.views.http_requests.post')
+    def test_a_rejected_code_is_a_400(self, mock_post, mock_get):
+        mock_post.return_value, mock_get.return_value = self._google(
+            token_json={'error': 'invalid_grant'})
+
+        response = self.client.post(
+            reverse('google-oauth'), {'code': 'stale'}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        mock_get.assert_not_called()
+
+
+class PhoneNumberUniquenessTests(APITestCase):
+    def setUp(self):
+        cache.clear()
+
+    def register(self, username, email, phone=None):
+        payload = {'username': username, 'email': email,
+                   'password': 'Passw0rdOK'}
+        if phone is not None:
+            payload['phone_number'] = phone
+        cache.clear()  # keep the register throttle out of the way
+        return self.client.post(reverse('register'), payload, format='json')
+
+    def test_a_phone_number_already_in_use_is_a_400_not_a_500(self):
+        first = self.register('ada', 'ada@example.com', '08012345678')
+        second = self.register('bola', 'bola@example.com', '08012345678')
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(second.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('phone', second.data['error'].lower())
+        self.assertFalse(User.objects.filter(username='bola').exists())
+
+    def test_several_people_can_register_without_a_phone_number(self):
+        # Blank numbers are stored as NULL, which the unique index permits
+        # any number of times - an empty string would collide.
+        self.assertEqual(self.register('c1', 'c1@example.com').status_code, 201)
+        self.assertEqual(self.register('c2', 'c2@example.com', '').status_code, 201)
+
+    def test_changing_your_phone_to_one_already_taken_is_a_400(self):
+        User.objects.create_user(
+            username='owner', email='owner@example.com',
+            password='Passw0rdOK', phone_number='08099999999')
+        user = User.objects.create_user(
+            username='mover', email='mover@example.com', password='Passw0rdOK')
+        self.client.force_authenticate(user)
+
+        response = self.client.patch(
+            reverse('profile'), {'phone_number': '08099999999'}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
